@@ -79,8 +79,9 @@ class Strategy:
         gain = (delta.where(delta > 0, 0)).fillna(0)
         loss = (-delta.where(delta < 0, 0)).fillna(0)
         
-        avg_gain = gain.ewm(com=self.rsi_window - 1, min_periods=self.rsi_window).mean()
-        avg_loss = loss.ewm(com=self.rsi_window - 1, min_periods=self.rsi_window).mean()
+        # Use Wilder's Smoothing (Standard RSI)
+        avg_gain = gain.ewm(com=self.rsi_window - 1, min_periods=self.rsi_window, adjust=False).mean()
+        avg_loss = loss.ewm(com=self.rsi_window - 1, min_periods=self.rsi_window, adjust=False).mean()
         
         rs = avg_gain / avg_loss
         df['RSI'] = 100 - (100 / (1 + rs))

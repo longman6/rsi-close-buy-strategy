@@ -38,3 +38,6 @@ trade_log_cron.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Output
+ticker.rsi.txt

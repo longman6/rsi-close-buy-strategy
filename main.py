@@ -137,7 +137,10 @@ def main():
         # Optional: Check 'Managed' state via KIS if not trusted FDR?
         # Implicitly done by FDR 'Dept' check in strategy.py
         
-        df = kis.get_daily_ohlcv(code)
+        # Optimize: Fetch only last 250 days (approx 1 year) which is enough for SMA100
+        # This significantly reduces API load compared to full history.
+        start_date = (datetime.now() - pd.Timedelta(days=250)).strftime("%Y%m%d")
+        df = kis.get_daily_ohlcv(code, start_date=start_date)
         if df.empty: continue
         
         df = strategy.calculate_indicators(df)
@@ -151,7 +154,10 @@ def main():
             logging.info(f"Found Candidate: {code} RSI={signal['rsi']:.2f}")
             
         cnt += 1
-        time.sleep(0.2) # Rate limit throttling (Safe: 5 req/sec)
+        # Rate limit throttling
+        # Mock mode needs 1.5s to avoid 500 errors, Real mode can be 0.2s
+        delay = 1.5 if kis.is_mock else 0.2
+        time.sleep(delay)
         
         if cnt % 10 == 0:
             logging.info(f"Analyzed {cnt}/{len(universe)} stocks...")

@@ -163,7 +163,7 @@ class KISClient:
                 logging.warning(f"[KIS] GetPrice Error {code}: {data['msg1']}")
         return None
 
-    def get_daily_ohlcv(self, code, period_code="D"):
+    def get_daily_ohlcv(self, code, start_date=None, end_date=None, period_code="D"):
         """
         Fetch daily OHLCV for chart/strategy.
         TR_ID: FHKST01010400 (Daily Price)
@@ -175,39 +175,88 @@ class KISClient:
         headers = self._get_headers("FHKST03010100")
         
         # Calculate start/end dates
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = "20230101" # Safe range for SMA100
+        target_start_date = start_date if start_date else "20230101"
+        current_end_date = end_date if end_date else datetime.now().strftime("%Y%m%d")
         
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": code,
-            "FID_INPUT_DATE_1": start_date, 
-            "FID_INPUT_DATE_2": end_date,
-            "FID_PERIOD_DIV_CODE": "D", # D: Day
-            "FID_ORG_ADJ_PRC": "1" # Adjusted Price
-        }
+        all_dfs = []
         
-        res = requests.get(url, headers=headers, params=params)
-        if res.status_code == 200:
-            data = res.json()
-            if data['rt_cd'] == '0' and data['output2']:
-                df = pd.DataFrame(data['output2'])
-                # Clean up columns: stck_bsop_date(Date), stck_clpr(Close), etc.
-                df = df.rename(columns={
-                    'stck_bsop_date': 'Date',
-                    'stck_oprc': 'Open',
-                    'stck_hgpr': 'High',
-                    'stck_lwpr': 'Low',
-                    'stck_clpr': 'Close',
-                    'acml_vol': 'Volume'
-                })
-                df = df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
-                # Convert to numeric
-                cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-                df[cols] = df[cols].apply(pd.to_numeric)
-                df['Date'] = pd.to_datetime(df['Date'])
-                df = df.sort_values('Date') # Ascending
-                return df
+        while True:
+            params = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": code,
+                "FID_INPUT_DATE_1": target_start_date, 
+                "FID_INPUT_DATE_2": current_end_date,
+                "FID_PERIOD_DIV_CODE": period_code, 
+                "FID_ORG_ADJ_PRC": "1" # Adjusted Price
+            }
+            
+            # Rate limit buffer inside loop (essential)
+            # Mock server needs longer delay to avoid 500 errors
+            delay = 0.5 if self.is_mock else 0.1
+            time.sleep(delay) 
+            
+            res = requests.get(url, headers=headers, params=params)
+            if res.status_code == 200:
+                data = res.json()
+                if data['rt_cd'] == '0' and data['output2']:
+                    chunk_df = pd.DataFrame(data['output2'])
+                    
+                    # Clean up columns for this chunk
+                    chunk_df = chunk_df.rename(columns={
+                        'stck_bsop_date': 'Date',
+                        'stck_oprc': 'Open',
+                        'stck_hgpr': 'High',
+                        'stck_lwpr': 'Low',
+                        'stck_clpr': 'Close',
+                        'acml_vol': 'Volume'
+                    })
+                    chunk_df = chunk_df[['Date', 'Open', 'High', 'Low', 'Close', 'Volume']]
+                    
+                    # Store chunk
+                    all_dfs.append(chunk_df)
+                    
+                    # Update end_date for next iteration
+                    # output2 is usually sorted desc by date, so first item is latest, last item is oldest in this chunk
+                    # But reliable way is to check min date in this chunk
+                    dates = chunk_df['Date'].tolist()
+                    if not dates: break
+                    
+                    min_date_str = min(dates) # "YYYYMMDD"
+                    
+                    # Check if we reached target start
+                    if min_date_str <= target_start_date:
+                        break
+                        
+                    # Calculate new end_date = min_date - 1 day
+                    min_date_dt = datetime.strptime(min_date_str, "%Y%m%d")
+                    new_end_dt = min_date_dt - timedelta(days=1)
+                    current_end_date = new_end_dt.strftime("%Y%m%d")
+                    
+                    # Safety break if we are stuck
+                    if new_end_dt < datetime.strptime(target_start_date, "%Y%m%d"):
+                        break
+                else:
+                    # No more data or error
+                    break
+            else:
+                logging.error(f"[KIS] Network Error in OHLCV loop: {res.status_code}")
+                break
+                
+        if all_dfs:
+            df = pd.concat(all_dfs)
+            # Drop duplicates just in case overlap
+            df = df.drop_duplicates(subset=['Date'])
+            
+            # Convert types
+            cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            df[cols] = df[cols].apply(pd.to_numeric)
+            df['Date'] = pd.to_datetime(df['Date'])
+            
+            # Filter solely within range (API might return a bit outside boundary depending on logic)
+            # Actually, let's trust the logic but just sort.
+            df = df.sort_values('Date') # Ascending
+            
+            return df
         return pd.DataFrame()
 
     def get_balance(self):
@@ -323,4 +372,3 @@ class KISClient:
         
         # For safety, we will implement this check in Strategy using FinanceDataReader if KIS is ambiguous.
         pass
-
