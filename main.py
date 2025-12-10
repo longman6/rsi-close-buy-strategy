@@ -93,7 +93,12 @@ def main():
                 run_sell_execution(kis, slack)
                 state["sell_exec_done"] = True
             
-            time.sleep(1) # Main Loop Tick
+            # Dynamic Sleep: 18:00 ~ 06:00 -> Sleep 10 mins (600s)
+            # Otherwise -> Sleep 1s
+            if 18 <= now.hour or now.hour < 6:
+                time.sleep(600)
+            else:
+                time.sleep(1) 
 
         except KeyboardInterrupt:
             logging.info("🛑 Bot Stopped by User.")
