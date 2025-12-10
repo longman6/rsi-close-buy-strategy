@@ -19,6 +19,10 @@ SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "#general")
 RSI_WINDOW = int(os.getenv("RSI_WINDOW", 3))
 SMA_WINDOW = int(os.getenv("SMA_WINDOW", 100))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", 5))
+RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", 35))
+RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", 70))
+RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", 35))
+RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", 70))
 
 # Trading Config
 # ALLOCATION_PCT = float(os.getenv("ALLOCATION_PCT", 0.20)) # Deprecated

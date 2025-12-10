@@ -7,6 +7,8 @@ class Strategy:
     def __init__(self):
         self.rsi_window = config.RSI_WINDOW
         self.sma_window = config.SMA_WINDOW
+        self.rsi_buy_threshold = config.RSI_BUY_THRESHOLD
+        self.rsi_sell_threshold = config.RSI_SELL_THRESHOLD
         
     def get_universe(self):
         """
@@ -117,7 +119,7 @@ class Strategy:
         if pd.isna(latest['SMA']) or pd.isna(latest['RSI']):
             return None
             
-        if latest['Close'] > latest['SMA'] and latest['RSI'] < 35:
+        if latest['Close'] > latest['SMA'] and latest['RSI'] < self.rsi_buy_threshold:
             return {
                 'code': code,
                 'rsi': latest['RSI'],
@@ -138,7 +140,7 @@ class Strategy:
         if pd.isna(latest['RSI']):
             return False
             
-        if latest['RSI'] > 70:
+        if latest['RSI'] > self.rsi_sell_threshold:
             return True
             
         return False
