@@ -4,6 +4,7 @@ import time
 import os
 import logging
 import pandas as pd
+import pytz
 from datetime import datetime, timedelta
 import config
 
@@ -437,11 +438,16 @@ class KISClient:
         
         # Let's use 'inquire-daily-ccld' (Daily Conclusion/Unfilled)
         
+        
+        # Use KST for Today
+        tz_kst = pytz.timezone('Asia/Seoul')
+        today_str = datetime.now(pytz.utc).astimezone(tz_kst).strftime("%Y%m%d")
+        
         params = {
             "CANO": self.account_no,
             "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
-            "INQR_STRT_DT": datetime.now().strftime("%Y%m%d"),
-            "INQR_END_DT": datetime.now().strftime("%Y%m%d"),
+            "INQR_STRT_DT": today_str,
+            "INQR_END_DT": today_str,
             "SLL_BUY_DVSN_CD": "00", # All
             "INQR_DVSN": "00", # 00: Order order
             "PDNO": "",

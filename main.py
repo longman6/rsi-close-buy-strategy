@@ -2,6 +2,7 @@ import sys
 import time
 import pandas as pd
 import logging
+import pytz
 from datetime import datetime, timedelta
 import config
 from src.kis_client import KISClient
@@ -29,8 +30,14 @@ state = {
     "last_reset_date": None
 }
 
+def get_now_kst():
+    """Get current time in KST (Asia/Seoul)"""
+    tz_kst = pytz.timezone('Asia/Seoul')
+    # If system is UTC, use utcnow().astimezone
+    return datetime.now(pytz.utc).astimezone(tz_kst)
+
 def reset_daily_state():
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = get_now_kst().strftime("%Y-%m-%d")
     if state["last_reset_date"] != today:
         logging.info("🔄 Resetting Daily State...")
         state["analysis_done"] = False
@@ -55,12 +62,18 @@ def main():
     
     slack.send_message("🤖 Bot Loop Started. Waiting for schedule...")
 
-    # Initialize Reset Date
-    state["last_reset_date"] = datetime.now().strftime("%Y-%m-%d")
+    state["last_reset_date"] = get_now_kst().strftime("%Y-%m-%d")
+
+    # Initial Status Display (Run once on startup)
+    logging.info("📊 Checking Initial Holdings...")
+    try:
+        display_holdings_status(kis, slack, strategy)
+    except Exception as e:
+        logging.error(f"Failed to display initial status: {e}")
 
     while True:
         try:
-            now = datetime.now()
+            now = get_now_kst()
             current_time = now.strftime("%H:%M")
             reset_daily_state()
 
@@ -80,8 +93,9 @@ def main():
             # Requirement: "09:05 check... then every 1 min check..."
             if current_time >= config.TIME_ORDER_CHECK and current_time < config.TIME_SELL_CHECK:
                  monitor_and_correct_orders(kis, slack)
-                 # Periodic Display of Holdings
-                 display_holdings_status(kis, slack, strategy)
+
+            # Periodic Display of Holdings (Always run, throttled inside)
+            display_holdings_status(kis, slack, strategy)
 
             # 4. 15:20 Sell Signal Check
             if current_time == config.TIME_SELL_CHECK and not state["sell_check_done"]:
@@ -130,7 +144,8 @@ def run_morning_analysis(kis, slack, strategy):
     candidates = []
     
     # Optimization: 250 days fetch
-    start_date = (datetime.now() - timedelta(days=250)).strftime("%Y%m%d")
+    # Use KST for date strings too, though API handles string YYYYMMDD
+    start_date = (get_now_kst() - timedelta(days=250)).strftime("%Y%m%d")
 
     cnt = 0
     for code in universe:
@@ -310,7 +325,7 @@ def display_holdings_status(kis, slack, strategy):
     
     # Optimization: Fetch shorter history for RSI(3) display
     # Must be > SMA_WINDOW (100) to ensure calculate_indicators adds columns
-    start_date = (datetime.now() - timedelta(days=200)).strftime("%Y%m%d")
+    start_date = (get_now_kst() - timedelta(days=200)).strftime("%Y%m%d")
     
     for h in holdings:
         name = h['prdt_name']
