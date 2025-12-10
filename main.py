@@ -183,11 +183,16 @@ def run_pre_order(kis, slack):
     count = len(state["buy_targets"])
     if count == 0: return
 
-    amt_per_stock = (cash * config.ALLOCATION_PCT) # Or split equal? Config says Allocation PCT..
-    # Note: User request in main.py before was "Split Remaining".
-    # Let's stick to simple "Split Cash / Count" if we want to fill slots fully? 
-    # Or strict PCT? Let's use Equal Split of Available Cash for simplicity and aggressiveness.
-    amt_per_stock = cash / count 
+    # amt_per_stock = (cash * config.ALLOCATION_PCT) # Deprecated
+    # Use Fixed Amount from Config
+    amt_per_stock = config.BUY_AMOUNT_KRW
+    
+    # Check if we have enough cash (Optional warning)
+    total_needed = amt_per_stock * count
+    if total_needed > cash:
+        msg = f"⚠️ 예수금 부족! 필요: {total_needed:,.0f}원, 보유: {cash:,.0f}원. 일부 주문이 거부될 수 있습니다."
+        logging.warning(msg)
+        slack.send_message(msg) 
 
     for target in state["buy_targets"]:
         code = target['code']

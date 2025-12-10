@@ -21,7 +21,8 @@ SMA_WINDOW = int(os.getenv("SMA_WINDOW", 100))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", 5))
 
 # Trading Config
-ALLOCATION_PCT = float(os.getenv("ALLOCATION_PCT", 0.20)) # 20% by default
+# ALLOCATION_PCT = float(os.getenv("ALLOCATION_PCT", 0.20)) # Deprecated
+BUY_AMOUNT_KRW = int(os.getenv("BUY_AMOUNT_KRW", 1000000)) # Default 1 Million KRW per stock
 
 # Scheduler Settings (24h format HH:MM)
 TIME_MORNING_ANALYSIS = os.getenv("TIME_MORNING_ANALYSIS", "08:30")
