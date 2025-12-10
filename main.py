@@ -304,7 +304,8 @@ def display_holdings_status(kis, slack, strategy):
     logging.info("-" * 60)
     
     # Optimization: Fetch shorter history for RSI(3) display
-    start_date = (datetime.now() - timedelta(days=100)).strftime("%Y%m%d")
+    # Must be > SMA_WINDOW (100) to ensure calculate_indicators adds columns
+    start_date = (datetime.now() - timedelta(days=200)).strftime("%Y%m%d")
     
     for h in holdings:
         name = h['prdt_name']
@@ -318,8 +319,8 @@ def display_holdings_status(kis, slack, strategy):
         rsi_val = 0.0
         if not df.empty:
             df = strategy.calculate_indicators(df)
-            if not df.empty and 'rsi' in df.columns:
-                 rsi_val = df['rsi'].iloc[-1]
+            if not df.empty and 'RSI' in df.columns:
+                 rsi_val = df['RSI'].iloc[-1]
         
         # Profit
         profit_amt = (curr - avg) * int(h['hldg_qty'])
