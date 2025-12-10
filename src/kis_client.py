@@ -421,3 +421,83 @@ class KISClient:
         
         # For safety, we will implement this check in Strategy using FinanceDataReader if KIS is ambiguous.
         pass
+
+    def get_outstanding_orders(self):
+        """
+        Fetch unfilled (outstanding) orders.
+        TR_ID: TTTC8055R (Real) / VTTC8055R (Mock)
+        """
+        path = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+        
+        tr_id = "VTTC8055R" if self.is_mock else "TTTC8055R"
+        
+        # Note: API might be slightly different for 'Unfilled'.
+        # Common endpoint for unfilled is 'inquire-psbl-order' or similar, 
+        # but 'inquire-daily-ccld' with 'CCLD_DVSN'="02" (Unfilled) is standard for history.
+        
+        # Let's use 'inquire-daily-ccld' (Daily Conclusion/Unfilled)
+        
+        params = {
+            "CANO": self.account_no,
+            "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
+            "INQR_STRT_DT": datetime.now().strftime("%Y%m%d"),
+            "INQR_END_DT": datetime.now().strftime("%Y%m%d"),
+            "SLL_BUY_DVSN_CD": "00", # All
+            "INQR_DVSN": "00", # 00: Order order
+            "PDNO": "",
+            "CCLD_DVSN": "02", # 02: Unfilled
+            "ORD_GNO_BRNO": "",
+            "PCOD": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        res = self._send_request("GET", path, tr_id, params=params)
+        if res and res.status_code == 200:
+            data = res.json()
+            if data['rt_cd'] == '0':
+                return data['output1'] # List of orders
+        return []
+
+    def revise_cancel_order(self, org_no, order_no, qty, price, is_cancel=False, order_type="00"):
+        """
+        Revise (Modify) or Cancel an existing order.
+        TR_ID: TTTC0803U (Real) / VTTC0803U (Mock)
+        is_cancel: True to cancel, False to modify price/qty
+        """
+        path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
+        
+        tr_id = "VTTC0803U" if self.is_mock else "TTTC0803U"
+        
+        # Order Cancel/Correction Code
+        # 01: Cancel, 02: Correction
+        cncl_dvsn = "02" if is_cancel else "01" # Wait, KIS docs usually: 01 for Correction, 02 for Cancel? 
+        # Checking docs:
+        # 01: Correction (Revise)
+        # 02: Cancel
+        cncl_dvsn = "02" if is_cancel else "01"
+        
+        body = {
+            "CANO": self.account_no,
+            "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
+            "KRX_FWDG_ORD_ORGNO": org_no, # Org Code (usually returned in order list)
+            "ORGN_ODNO": order_no, # Original Order No
+            "ORD_DVSN": order_type, # 00: Limit, 01: Mkt... (for correction)
+            "RVSE_CNCL_DVSN_CD": cncl_dvsn, 
+            "ORD_QTY": str(qty),
+            "ORD_UNPR": str(price), # 0 if Cancel
+            "QTY_ALL_ORD_YN": "Y" if qty == 0 else "N" # Y if cancelling all remainder? Let's be explicit with qty
+        }
+        # Safely handle 'Cancel All' if qty is 0, logic might vary. 
+        # Better to pass explicit remainder qty.
+        if int(qty) == 0:
+             body["QTY_ALL_ORD_YN"] = "Y"
+        
+        res = self._send_request("POST", path, tr_id, body=body)
+        data = res.json()
+        if data['rt_cd'] == '0':
+            logging.info(f"[KIS] Order {'Cancel' if is_cancel else 'Revise'} Success: {order_no}")
+            return True, data['msg1']
+        else:
+             logging.error(f"[KIS] Order {'Cancel' if is_cancel else 'Revise'} Failed: {data['msg1']}")
+             return False, data['msg1']

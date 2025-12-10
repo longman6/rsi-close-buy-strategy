@@ -22,3 +22,10 @@ MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", 5))
 
 # Trading Config
 ALLOCATION_PCT = float(os.getenv("ALLOCATION_PCT", 0.20)) # 20% by default
+
+# Scheduler Settings (24h format HH:MM)
+TIME_MORNING_ANALYSIS = os.getenv("TIME_MORNING_ANALYSIS", "08:30")
+TIME_PRE_ORDER = os.getenv("TIME_PRE_ORDER", "08:57")
+TIME_ORDER_CHECK = os.getenv("TIME_ORDER_CHECK", "09:05")
+TIME_SELL_CHECK = os.getenv("TIME_SELL_CHECK", "15:20")
+TIME_SELL_EXEC = os.getenv("TIME_SELL_EXEC", "15:26")
