@@ -64,6 +64,11 @@ def main():
 
     state["last_reset_date"] = get_now_kst().strftime("%Y-%m-%d")
 
+    # Log Startup Time in KST
+    startup_kst = get_now_kst().strftime("%Y-%m-%d %H:%M:%S")
+    logging.info(f"⏰ KST Clock Check: {startup_kst}")
+    logging.info(f"📅 Daily State: Analysis={state['analysis_done']}, PreOrder={state['pre_order_done']}")
+
     # Initial Status Display (Run once on startup)
     logging.info("📊 Checking Initial Holdings...")
     try:
@@ -78,12 +83,13 @@ def main():
             reset_daily_state()
 
             # 1. 08:30 Analysis & Buy Candidate Selection
-            if current_time == config.TIME_MORNING_ANALYSIS and not state["analysis_done"]:
+            # Use >= to allow catch-up if started late
+            if current_time >= config.TIME_MORNING_ANALYSIS and not state["analysis_done"]:
                 run_morning_analysis(kis, slack, strategy)
                 state["analysis_done"] = True
 
-            # 2. 08:57 Pre-Market Order (Limit Order + 5 ticks)
-            if current_time == config.TIME_PRE_ORDER and not state["pre_order_done"]:
+            # 2. 08:57 Pre-Market Order
+            if current_time >= config.TIME_PRE_ORDER and not state["pre_order_done"]:
                 run_pre_order(kis, slack)
                 state["pre_order_done"] = True
                 
@@ -98,12 +104,12 @@ def main():
             display_holdings_status(kis, slack, strategy)
 
             # 4. 15:20 Sell Signal Check
-            if current_time == config.TIME_SELL_CHECK and not state["sell_check_done"]:
+            if current_time >= config.TIME_SELL_CHECK and not state["sell_check_done"]:
                 run_sell_check(kis, slack, strategy)
                 state["sell_check_done"] = True
 
             # 5. 15:26 Sell Execution (Market/Best)
-            if current_time == config.TIME_SELL_EXEC and not state["sell_exec_done"]:
+            if current_time >= config.TIME_SELL_EXEC and not state["sell_exec_done"]:
                 run_sell_execution(kis, slack)
                 state["sell_exec_done"] = True
             
