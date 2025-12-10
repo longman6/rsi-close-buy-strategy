@@ -107,10 +107,10 @@ def main():
                 run_sell_execution(kis, slack)
                 state["sell_exec_done"] = True
             
-            # Dynamic Sleep: 18:00 ~ 06:00 -> Sleep 10 mins (600s)
+            # Dynamic Sleep: 18:00 ~ 06:00 -> Sleep 10 mins (60s)
             # Otherwise -> Sleep 5s
             if 18 <= now.hour or now.hour < 6:
-                time.sleep(600)
+                time.sleep(60)
             else:
                 time.sleep(5) 
 
