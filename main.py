@@ -81,7 +81,7 @@ def main():
             if current_time >= config.TIME_ORDER_CHECK and current_time < config.TIME_SELL_CHECK:
                  monitor_and_correct_orders(kis, slack)
                  # Periodic Display of Holdings
-                 display_holdings_status(kis, slack)
+                 display_holdings_status(kis, slack, strategy)
 
             # 4. 15:20 Sell Signal Check
             if current_time == config.TIME_SELL_CHECK and not state["sell_check_done"]:
@@ -282,7 +282,7 @@ def monitor_and_correct_orders(kis, slack):
                      kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], rem_qty, current_price, is_cancel=False)
                      slack.send_message(f"✏️ Modified {code} -> {current_price}")
 
-def display_holdings_status(kis, slack):
+def display_holdings_status(kis, slack, strategy):
     """
     Step 7: Check Every 1 min and display info.
     We combine this with monitor loop.
@@ -303,12 +303,8 @@ def display_holdings_status(kis, slack):
     # Visual Separator for new loop
     logging.info("-" * 60)
     
-    # Log concise summary
-    # logging.info(f"Holding Status: {len(holdings)} stocks.")
-    # Detailed Slack msg might be too spammy every 1 min? 
-    # Recommendation: Log to file, Slack only on change or every 30 mins?
-    # User Request: "1분 마다 돌아가면서 내가 매수한 종목 정보를 뿌려줘"
-    # Okay, we will log it.
+    # Optimization: Fetch shorter history for RSI(3) display
+    start_date = (datetime.now() - timedelta(days=100)).strftime("%Y%m%d")
     
     for h in holdings:
         name = h['prdt_name']
@@ -316,11 +312,20 @@ def display_holdings_status(kis, slack):
         curr = float(h['prpr'])
         avg = float(h['pchs_avg_pric'])
         
+        # Calculate RSI
+        time.sleep(0.2 if kis.is_mock else 0.1) # Brief delay
+        df = kis.get_daily_ohlcv(code, start_date=start_date)
+        rsi_val = 0.0
+        if not df.empty:
+            df = strategy.calculate_indicators(df)
+            if not df.empty and 'rsi' in df.columns:
+                 rsi_val = df['rsi'].iloc[-1]
+        
         # Profit
         profit_amt = (curr - avg) * int(h['hldg_qty'])
         profit_pct = (curr - avg) / avg * 100
         
-        msg = f"📊 {name}({code}): Now {curr:,.0f} / Buy {avg:,.0f} | P/L: {profit_amt:,.0f} ({profit_pct:.2f}%)"
+        msg = f"📊 {name}({code}): Now {curr:,.0f} / Buy {avg:,.0f} | RSI: {rsi_val:.2f} | P/L: {profit_amt:,.0f} ({profit_pct:.2f}%)"
         logging.info(msg)
 
 def run_sell_check(kis, slack, strategy):
