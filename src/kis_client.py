@@ -107,6 +107,56 @@ class KISClient:
             pass
         return False
 
+    def _send_request(self, method, path, tr_id, params=None, body=None):
+        """
+        Refactored Request Handler with Auto Token Refresh
+        Retries once if token expired (EGW00123)
+        """
+        url = f"{self.base_url}{path}"
+        
+        for attempt in range(2):
+            headers = self._get_headers(tr_id)
+            res = None
+            try:
+                if method == "GET":
+                    res = requests.get(url, headers=headers, params=params)
+                else:
+                    res = requests.post(url, headers=headers, data=json.dumps(body) if body else None)
+                
+                # Check for Token Expiry
+                is_expired = False
+                try:
+                    data = res.json()
+                    # Check msg_cd for EGW00123 (Token Expired)
+                    if data.get('msg_cd') == 'EGW00123':
+                        is_expired = True
+                except:
+                    # JSON parse error means probably not a standard API error response
+                    pass
+                
+                if is_expired:
+                    if attempt == 0:
+                        logging.warning("[KIS] Token Expired (EGW00123). Refreshing and retrying...")
+                        # Force Refresh
+                        self.access_token = None
+                        if os.path.exists('token.json'):
+                            os.remove('token.json')
+                        self.get_access_token() # Will fetch new and save
+                        continue # Retry loop
+                    else:
+                        logging.error("[KIS] Token Refresh Failed or Rejected twice.")
+                        return res
+                
+                return res
+            
+            except Exception as e:
+                logging.error(f"[KIS] Request Exception: {e}")
+                if attempt == 0: 
+                    time.sleep(1)
+                    continue 
+                return None
+        return None
+
     def get_access_token(self):
         """Get or refresh OAuth access token."""
         # Try loading from file first
@@ -146,16 +196,15 @@ class KISClient:
         TR_ID: FHKST01010100 (Stock Current Price)
         """
         path = "/uapi/domestic-stock/v1/quotations/inquire-price"
-        url = f"{self.base_url}{path}"
-        headers = self._get_headers("FHKST01010100")
         
         params = {
             "FID_COND_MRKT_DIV_CODE": "J", # J: Stock, W: Warrants...
             "FID_INPUT_ISCD": code # Stock Code
         }
         
-        res = requests.get(url, headers=headers, params=params)
-        if res.status_code == 200:
+        res = self._send_request("GET", path, "FHKST01010100", params=params)
+        
+        if res and res.status_code == 200:
             data = res.json()
             if data['rt_cd'] == '0':
                 return data['output']
@@ -195,7 +244,7 @@ class KISClient:
             delay = 0.5 if self.is_mock else 0.1
             time.sleep(delay) 
             
-            res = requests.get(url, headers=headers, params=params)
+            res = self._send_request("GET", path, "FHKST03010100", params=params)
             if res.status_code == 200:
                 data = res.json()
                 if data['rt_cd'] == '0' and data['output2']:
@@ -284,7 +333,7 @@ class KISClient:
             "CTX_AREA_NK100": ""
         }
         
-        res = requests.get(url, headers=headers, params=params)
+        res = self._send_request("GET", path, tr_id, params=params)
         if res.status_code == 200:
             data = res.json()
             if data['rt_cd'] == '0':
@@ -335,7 +384,7 @@ class KISClient:
             "ORD_UNPR": str(price) # 0 for Market
         }
         
-        res = requests.post(url, headers=headers, data=json.dumps(body))
+        res = self._send_request("POST", path, tr_id, body=body)
         data = res.json()
         if data['rt_cd'] == '0':
             logging.info(f"[KIS] Order Success: {side.upper()} {code} {qty}ea @ {price if price >0 else 'Market'}")
