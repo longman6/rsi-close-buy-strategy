@@ -300,6 +300,9 @@ def display_holdings_status(kis, slack):
     holdings = [h for h in balance['holdings'] if int(h['hldg_qty']) > 0]
     if not holdings: return
     
+    # Visual Separator for new loop
+    logging.info("-" * 60)
+    
     # Log concise summary
     # logging.info(f"Holding Status: {len(holdings)} stocks.")
     # Detailed Slack msg might be too spammy every 1 min? 
