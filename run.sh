@@ -10,4 +10,8 @@ source .venv/bin/activate
 # Run the Bot
 # Logs are inherently handled by main.py (trade_log.txt)
 # But we also capture stderr just in case
-python3 main.py >> trade_log_cron.txt 2>&1
+#python3 main.py >> trade_log_cron.txt 2>&1
+
+python3 main.py
+
+
