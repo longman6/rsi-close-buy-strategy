@@ -89,14 +89,27 @@ def main():
             reset_daily_state()
 
             # 1. 08:30 Analysis & Buy Candidate Selection
-            # Use >= to allow catch-up if started late
-            if current_time >= config.TIME_MORNING_ANALYSIS and not state["analysis_done"]:
-                run_morning_analysis(kis, slack, strategy)
+            # 1. 08:30 Analysis & Buy Candidate Selection
+            # Window: 08:30 ~ 08:50
+            if current_time >= config.TIME_MORNING_ANALYSIS and current_time <= "08:50":
+                if not state["analysis_done"]:
+                    run_morning_analysis(kis, slack, strategy)
+                    state["analysis_done"] = True
+            elif current_time > "08:50" and not state["analysis_done"]:
+                # If started late (after 08:50), skip analysis
+                logging.info(f"⏭️ [Skip] Morning Analysis window passed ({current_time}).")
                 state["analysis_done"] = True
 
             # 2. 08:57 Pre-Market Order
-            if current_time >= config.TIME_PRE_ORDER and not state["pre_order_done"]:
-                run_pre_order(kis, slack)
+            # 2. 08:57 Pre-Market Order
+            # Window: 08:57 ~ 09:10
+            if current_time >= config.TIME_PRE_ORDER and current_time <= "09:10":
+                if not state["pre_order_done"]:
+                    run_pre_order(kis, slack)
+                    state["pre_order_done"] = True
+            elif current_time > "09:10" and not state["pre_order_done"]:
+                # If started late, skip pre-order
+                logging.info(f"⏭️ [Skip] Pre-Order window passed ({current_time}).")
                 state["pre_order_done"] = True
                 
             # 3. 09:05 ~ Order Verification & Correction Loop
