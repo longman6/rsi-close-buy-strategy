@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 import config
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Configure logging
+# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class KISClient:
     def __init__(self):
@@ -385,14 +386,30 @@ class KISClient:
             "ORD_UNPR": str(price) # 0 for Market
         }
         
-        res = self._send_request("POST", path, tr_id, body=body)
-        data = res.json()
-        if data['rt_cd'] == '0':
-            logging.info(f"[KIS] Order Success: {side.upper()} {code} {qty}ea @ {price if price >0 else 'Market'}")
-            return True, data['msg1']
-        else:
-            logging.error(f"[KIS] Order Failed: {data['msg1']}")
-            return False, data['msg1']
+        while True:
+            res = self._send_request("POST", path, tr_id, body=body)
+            if res is None:
+                logging.error("[KIS] Order Request Failed (No Response)")
+                return False, "No Response"
+
+            try:
+                data = res.json()
+            except Exception as e:
+                logging.error(f"[KIS] Order Response JSON Error: {e}")
+                return False, "JSON Error"
+
+            if data['rt_cd'] == '0':
+                logging.info(f"[KIS] Order Success: {side.upper()} {code} {qty}ea @ {price if price >0 else 'Market'}")
+                return True, data['msg1']
+            else:
+                # Check for TPS Limit Error
+                if "초당 거래건수를 초과하였습니다" in data.get('msg1', ''):
+                    logging.warning(f"[KIS] Order Rate Limit Exceeded: {data['msg1']} -> Sleeping 5s and retrying...")
+                    time.sleep(5)
+                    continue
+                else:
+                    logging.error(f"[KIS] Order Failed: {data['msg1']}")
+                    return False, data['msg1']
 
     def check_manage_status(self, code):
         """

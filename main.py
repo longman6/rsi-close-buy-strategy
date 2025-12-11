@@ -10,6 +10,12 @@ from src.slack_bot import SlackBot
 from src.strategy import Strategy
 
 # Setup Logging
+# Setup Logging
+def kst_converter(*args):
+    return datetime.now(pytz.timezone('Asia/Seoul')).timetuple()
+
+logging.Formatter.converter = kst_converter
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
