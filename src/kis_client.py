@@ -343,7 +343,7 @@ class KISClient:
                 holdings = data['output1']
                 summary = data['output2'][0]
                 return {
-                    'cash_available': float(summary.get('dnca_tot_amt', 0)), # Deposit
+                    'cash_available': self.get_buyable_cash(), # Real Orderable Cash
                     'total_asset': float(summary.get('tot_evlu_amt', 0)),
                     'holdings': holdings 
                 }
@@ -352,6 +352,36 @@ class KISClient:
         else:
             logging.error(f"[KIS] Network/Server Error: {res.status_code} - {res.text}")
         return None
+
+    def get_buyable_cash(self):
+        """
+        Fetch Real-Time Orderable Cash via inquire-psbl-order.
+        TR_ID: TTTC8908R (Real) / VTTC8908R (Mock)
+        """
+        path = "/uapi/domestic-stock/v1/trading/inquire-psbl-order"
+        
+        tr_id = "VTTC8908R" if self.is_mock else "TTTC8908R"
+        
+        # We need a dummy code to check buying power (KIS requirement)
+        # Using Samsung Electronics (005930) or any valid code
+        params = {
+            "CANO": self.account_no,
+            "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
+            "PDNO": "005930", 
+            "ORD_UNPR": "0",
+            "ORD_DVSN": "01",
+            "CMA_EVLU_AMT_ICLD_YN": "Y",
+            "OVRS_ICLD_YN": "N"
+        }
+        
+        res = self._send_request("GET", path, tr_id, params=params)
+        if res and res.status_code == 200:
+            data = res.json()
+            if data['rt_cd'] == '0':
+                return float(data['output']['ord_psbl_cash'])
+            else:
+                 logging.warning(f"[KIS] Buyable Cash Error: {data['msg1']}")
+        return 0.0
 
     def send_order(self, code, qty, side="buy", price=0, order_type="00"):
         """
