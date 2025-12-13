@@ -33,7 +33,9 @@ state = {
     "sell_check_done": False,
     "sell_exec_done": False,
     "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
-    "last_reset_date": None
+    "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
+    "last_reset_date": None,
+    "is_holiday": False
 }
 
 def get_now_kst():
@@ -42,7 +44,7 @@ def get_now_kst():
     # If system is UTC, use utcnow().astimezone
     return datetime.now(pytz.utc).astimezone(tz_kst)
 
-def reset_daily_state():
+def reset_daily_state(kis):
     today = get_now_kst().strftime("%Y-%m-%d")
     if state["last_reset_date"] != today:
         logging.info("🔄 Resetting Daily State...")
@@ -53,6 +55,15 @@ def reset_daily_state():
         state["sell_exec_done"] = False
         state["buy_targets"] = []
         state["last_reset_date"] = today
+        
+        # Check Holiday
+        today_str = today.replace("-", "")
+        if not kis.is_trading_day(today_str):
+            state["is_holiday"] = True
+            logging.info(f"🏖️ Today ({today}) is a Holiday/Weekend. Trading Paused.")
+        else:
+            state["is_holiday"] = False
+            logging.info(f"📈 Today ({today}) is a Trading Day.")
 
 def main():
     logging.info("🚀 Continuous RSI Power Zone Bot Started")
@@ -69,6 +80,14 @@ def main():
     slack.send_message("🤖 Bot Loop Started. Waiting for schedule...")
 
     state["last_reset_date"] = get_now_kst().strftime("%Y-%m-%d")
+    
+    # Check Initial Holiday Status
+    today_str = state["last_reset_date"].replace("-", "")
+    if not kis.is_trading_day(today_str):
+        state["is_holiday"] = True
+        logging.info(f"🏖️ Today is a Holiday/Weekend. Trading Paused.")
+    else:
+        state["is_holiday"] = False
 
     # Log Startup Time in KST
     startup_kst = get_now_kst().strftime("%Y-%m-%d %H:%M:%S")
@@ -76,17 +95,32 @@ def main():
     logging.info(f"📅 Daily State: Analysis={state['analysis_done']}, PreOrder={state['pre_order_done']}")
 
     # Initial Status Display (Run once on startup)
-    logging.info("📊 Checking Initial Holdings...")
-    try:
-        display_holdings_status(kis, slack, strategy)
-    except Exception as e:
-        logging.error(f"Failed to display initial status: {e}")
+    # Initial Status Display (Run once on startup)
+    if not state["is_holiday"]:
+        logging.info("📊 Checking Initial Holdings...")
+        try:
+            display_holdings_status(kis, slack, strategy)
+        except Exception as e:
+            logging.error(f"Failed to display initial status: {e}")
+    else:
+        logging.info("🏖️ Holiday/Weekend: Skipping Initial Holdings Check to avoid API errors.")
 
     while True:
         try:
             now = get_now_kst()
             current_time = now.strftime("%H:%M")
-            reset_daily_state()
+            now = get_now_kst()
+            current_time = now.strftime("%H:%M")
+            reset_daily_state(kis)
+
+            # Holiday Skip
+            if state["is_holiday"]:
+                # Log heartbeat occasionally? Or just sleep
+                if int(now.strftime("%M")) % 30 == 0 and int(now.strftime("%S")) < 5:
+                     logging.info(f"💤 Holiday Sleep ({now.strftime('%Y-%m-%d %H:%M')})...")
+                time.sleep(60) 
+                # Still check reset_daily_state next loop
+                continue
 
             # 1. 08:30 Analysis & Buy Candidate Selection
             # 1. 08:30 Analysis & Buy Candidate Selection

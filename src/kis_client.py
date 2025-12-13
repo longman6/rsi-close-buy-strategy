@@ -383,6 +383,69 @@ class KISClient:
                  logging.warning(f"[KIS] Buyable Cash Error: {data['msg1']}")
         return 0.0
 
+    def is_trading_day(self, date_str):
+        """
+        Check if the given date (YYYYMMDD) is a trading day.
+        TR_ID: CTCA0903R (Check Holiday)
+        """
+        # [Optimization] Local Weekend Check
+        try:
+            dt = datetime.strptime(date_str, "%Y%m%d")
+            # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+            if dt.weekday() >= 5:
+                # logging.info(f"[KIS] {date_str} is Weekend (Local Check). Skipping API.")
+                return False
+        except ValueError:
+            logging.error(f"[KIS] Invalid Date Format for Holiday Check: {date_str}")
+            # Fallback to API check if parsing fails, though likely to fail there too
+            pass
+
+        path = "/uapi/domestic-stock/v1/quotations/chk-holiday"
+        tr_id = "CTCA0903R"
+        
+        params = {
+            "BASS_DT": date_str,
+            "CTX_AREA_NK": "",
+            "CTX_AREA_FK": ""
+        }
+        
+        retry_count = 0
+        while retry_count < 5:
+            res = self._send_request("GET", path, tr_id, params=params)
+            print(res.json())
+            if res and res.status_code == 200:
+                data = res.json()
+                if data['rt_cd'] == '0':
+                    outputs = data.get('output', [])
+                    for item in outputs:
+                        if item['bass_dt'] == date_str:
+                            return item['opnd_yn'] == 'Y'
+                    return True 
+                else:
+                    if "초당 거래건수를 초과하였습니다" in data.get('msg1', ''):
+                        # TPS Limit -> Wait and Retry (Don't count strictly against limit or allow many retries)
+                        logging.warning(f"[KIS] Holiday Check TPS Limit -> Retrying...")
+                        time.sleep(1)
+                        # retry_count unchanged? No, avoid infinite loop risk. 
+                        # But TPS can be frequent. Let's not increment count for TPS.
+                        continue
+                        
+                    logging.warning(f"[KIS] Holiday Check Error: {data['msg1']}")
+                    return True # Default open on non-TPS error
+            else:
+                 retry_count += 1
+                 status = res.status_code if res else "None"
+                 # Mock Server Workaround: 500 Error
+                 if self.is_mock and status == 500:
+                     logging.warning("[KIS-MOCK] Holiday Check 500 Error. Mock Server Unstable. Assuming Open.")
+                     return True
+                 
+                 logging.warning(f"[KIS] Holiday Check Network Error ({status}). Retrying...")
+                 time.sleep(1)
+        
+        logging.error("[KIS] Holiday Check Failed after retries. Defaulting to True.")
+        return True
+
     def send_order(self, code, qty, side="buy", price=0, order_type="00"):
         """
         Send Buy/Sell Order.
