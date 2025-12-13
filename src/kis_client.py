@@ -412,7 +412,6 @@ class KISClient:
         retry_count = 0
         while retry_count < 5:
             res = self._send_request("GET", path, tr_id, params=params)
-            print(res.json())
             if res and res.status_code == 200:
                 data = res.json()
                 if data['rt_cd'] == '0':
