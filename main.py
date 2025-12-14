@@ -96,14 +96,11 @@ def main():
 
     # Initial Status Display (Run once on startup)
     # Initial Status Display (Run once on startup)
-    if not state["is_holiday"]:
-        logging.info("📊 Checking Initial Holdings...")
-        try:
-            display_holdings_status(kis, slack, strategy)
-        except Exception as e:
-            logging.error(f"Failed to display initial status: {e}")
-    else:
-        logging.info("🏖️ Holiday/Weekend: Skipping Initial Holdings Check to avoid API errors.")
+    logging.info("📊 Checking Initial Holdings...")
+    try:
+        display_holdings_status(kis, slack, strategy)
+    except Exception as e:
+        logging.error(f"Failed to display initial status (Network/API Error): {e}")
 
     while True:
         try:
@@ -113,58 +110,57 @@ def main():
             current_time = now.strftime("%H:%M")
             reset_daily_state(kis)
 
-            # Holiday Skip
-            if state["is_holiday"]:
-                # Log heartbeat occasionally? Or just sleep
-                if int(now.strftime("%M")) % 30 == 0 and int(now.strftime("%S")) < 5:
-                     logging.info(f"💤 Holiday Sleep ({now.strftime('%Y-%m-%d %H:%M')})...")
-                time.sleep(60) 
-                # Still check reset_daily_state next loop
-                continue
+            # Holiday Skip - Removed to allow Holdings Display
+            # if state["is_holiday"]: ...
 
             # 1. 08:30 Analysis & Buy Candidate Selection
             # 1. 08:30 Analysis & Buy Candidate Selection
             # Window: 08:30 ~ 08:50
-            if current_time >= config.TIME_MORNING_ANALYSIS and current_time <= "08:50":
-                if not state["analysis_done"]:
-                    run_morning_analysis(kis, slack, strategy)
+            if not state["is_holiday"]:
+                if current_time >= config.TIME_MORNING_ANALYSIS and current_time <= "08:50":
+                    if not state["analysis_done"]:
+                        run_morning_analysis(kis, slack, strategy)
+                        state["analysis_done"] = True
+                elif current_time > "08:50" and not state["analysis_done"]:
+                    # If started late (after 08:50), skip analysis
+                    logging.info(f"⏭️ [Skip] Morning Analysis window passed ({current_time}).")
                     state["analysis_done"] = True
-            elif current_time > "08:50" and not state["analysis_done"]:
-                # If started late (after 08:50), skip analysis
-                logging.info(f"⏭️ [Skip] Morning Analysis window passed ({current_time}).")
-                state["analysis_done"] = True
 
             # 2. 08:57 Pre-Market Order
             # 2. 08:57 Pre-Market Order
             # Window: 08:57 ~ 09:10
-            if current_time >= config.TIME_PRE_ORDER and current_time <= "09:10":
-                if not state["pre_order_done"]:
-                    run_pre_order(kis, slack)
+            if not state["is_holiday"]:
+                if current_time >= config.TIME_PRE_ORDER and current_time <= "09:10":
+                    if not state["pre_order_done"]:
+                        run_pre_order(kis, slack)
+                        state["pre_order_done"] = True
+                elif current_time > "09:10" and not state["pre_order_done"]:
+                    # If started late, skip pre-order
+                    logging.info(f"⏭️ [Skip] Pre-Order window passed ({current_time}).")
                     state["pre_order_done"] = True
-            elif current_time > "09:10" and not state["pre_order_done"]:
-                # If started late, skip pre-order
-                logging.info(f"⏭️ [Skip] Pre-Order window passed ({current_time}).")
-                state["pre_order_done"] = True
                 
             # 3. 09:05 ~ Order Verification & Correction Loop
             # This runs repeatedly every minute starting from 09:05 until ... say 15:00?
             # Or just "If verify not done, or continuous check?"
             # Requirement: "09:05 check... then every 1 min check..."
-            if current_time >= config.TIME_ORDER_CHECK and current_time < config.TIME_SELL_CHECK:
-                 monitor_and_correct_orders(kis, slack)
+            if not state["is_holiday"]:
+                if current_time >= config.TIME_ORDER_CHECK and current_time < config.TIME_SELL_CHECK:
+                     monitor_and_correct_orders(kis, slack)
 
             # Periodic Display of Holdings (Always run, throttled inside)
             display_holdings_status(kis, slack, strategy)
 
             # 4. 15:20 Sell Signal Check
-            if current_time >= config.TIME_SELL_CHECK and not state["sell_check_done"]:
-                run_sell_check(kis, slack, strategy)
-                state["sell_check_done"] = True
+            if not state["is_holiday"]:
+                if current_time >= config.TIME_SELL_CHECK and not state["sell_check_done"]:
+                    run_sell_check(kis, slack, strategy)
+                    state["sell_check_done"] = True
 
             # 5. 15:26 Sell Execution (Market/Best)
-            if current_time >= config.TIME_SELL_EXEC and not state["sell_exec_done"]:
-                run_sell_execution(kis, slack)
-                state["sell_exec_done"] = True
+            if not state["is_holiday"]:
+                if current_time >= config.TIME_SELL_EXEC and not state["sell_exec_done"]:
+                    run_sell_execution(kis, slack)
+                    state["sell_exec_done"] = True
             
             time.sleep(1)
             
