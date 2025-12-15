@@ -1,4 +1,5 @@
 import sys
+import os
 import time
 import pandas as pd
 import logging
@@ -78,8 +79,12 @@ def main():
     strategy = Strategy()
     
     # 0. Initialize Trade Manager & Parse Logs (Startup)
-    logging.info("📜 Parsing local trade logs for history...")
-    parse_trade_log.parse_log() # Force update history from logs
+    if not os.path.exists("trade_history.json"):
+        logging.info("📜 trade_history.json not found. Parsing local trade logs...")
+        parse_trade_log.parse_log()
+    else:
+        logging.info("📜 trade_history.json found. Loading existing history.")
+        
     trade_manager = TradeManager()
 
     # Disable Slack in Mock Mode

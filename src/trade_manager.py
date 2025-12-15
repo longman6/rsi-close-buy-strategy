@@ -53,10 +53,14 @@ class TradeManager:
 
     def get_holding_days(self, code, current_date_str=None):
         """Calculate how many days held."""
+        # If unknown, treat as 0 days held (Do NOT Force Sell)
         if code not in self.history["holdings"]:
             return 0
+            
+        buy_date_str = self.history["holdings"][code].get("buy_date")
+        if not buy_date_str:
+             return 0
         
-        buy_date_str = self.history["holdings"][code]["buy_date"]
         # If current_date not passed, use today KST
         if not current_date_str:
             tz_kst = pytz.timezone('Asia/Seoul')
