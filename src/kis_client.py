@@ -388,6 +388,11 @@ class KISClient:
         Check if the given date (YYYYMMDD) is a trading day.
         TR_ID: CTCA0903R (Check Holiday)
         """
+        # [Override] Mock Investment -> Always Trading Day
+        if self.is_mock:
+            logging.info(f"[KIS] Mock Mode: Forcing Trading Day = True for {date_str}")
+            return True
+
         # [Optimization] Local Weekend Check
         try:
             dt = datetime.strptime(date_str, "%Y%m%d")
