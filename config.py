@@ -21,8 +21,9 @@ SMA_WINDOW = int(os.getenv("SMA_WINDOW", 100))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", 5))
 RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", 35))
 RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", 70))
-RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", 35))
-RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", 70))
+
+MAX_HOLDING_DAYS = int(os.getenv("MAX_HOLDING_DAYS", 38))
+LOSS_COOLDOWN_DAYS = int(os.getenv("LOSS_COOLDOWN_DAYS", 40))
 
 # Trading Config
 # ALLOCATION_PCT = float(os.getenv("ALLOCATION_PCT", 0.20)) # Deprecated
