@@ -113,7 +113,7 @@ def main():
     # Initial Status Display (Run once on startup)
     logging.info("📊 Checking Initial Holdings...")
     try:
-        display_holdings_status(kis, slack, strategy)
+        display_holdings_status(kis, slack, strategy, trade_manager)
     except Exception as e:
         logging.error(f"Failed to display initial status (Network/API Error): {e}")
 
@@ -163,7 +163,7 @@ def main():
                      monitor_and_correct_orders(kis, slack, trade_manager)
 
             # Periodic Display of Holdings (Always run, throttled inside)
-            display_holdings_status(kis, slack, strategy)
+            display_holdings_status(kis, slack, strategy, trade_manager)
 
             # 4. 15:20 Sell Signal Check
             if not state["is_holiday"]:
@@ -373,7 +373,7 @@ def monitor_and_correct_orders(kis, slack, trade_manager):
                      kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], rem_qty, current_price, is_cancel=False)
                      slack.send_message(f"✏️ Modified {code} -> {current_price}")
 
-def display_holdings_status(kis, slack, strategy):
+def display_holdings_status(kis, slack, strategy, trade_manager):
     """
     Step 7: Check Every 1 min and display info.
     We combine this with monitor loop.
@@ -417,7 +417,9 @@ def display_holdings_status(kis, slack, strategy):
         profit_amt = (curr - avg) * int(h['hldg_qty'])
         profit_pct = (curr - avg) / avg * 100
         
-        msg = f"📊 {name}({code}): Now {curr:,.0f} / Buy {avg:,.0f} | RSI: {rsi_val:.2f} | P/L: {profit_amt:,.0f} ({profit_pct:.2f}%)"
+        days_held = trade_manager.get_holding_days(code)
+        
+        msg = f"📊 {name}({code}): Now {curr:,.0f} / Buy {avg:,.0f} | RSI: {rsi_val:.2f} | P/L: {profit_amt:,.0f} ({profit_pct:.2f}%) | Held: {days_held}d"
         logging.info(msg)
 
 def run_sell_check(kis, slack, strategy, trade_manager):
