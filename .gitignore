@@ -43,3 +43,4 @@ Thumbs.db
 ticker.rsi.txt
 trade_history.json
 exclude_list.txt
+advice_history.db

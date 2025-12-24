@@ -544,7 +544,14 @@ class KISClient:
         """
         # Reuse get_current_price which fetches FHKST01010100
         # We need the RAW data, but get_current_price returns 'output' dict.
-        data = self.get_current_price(code)
+        
+        data = None
+        for _ in range(3): # Retry up to 3 times
+            data = self.get_current_price(code)
+            if data:
+                break
+            time.sleep(0.5)
+            
         if not data:
             return True, "No Data" # Can't verify, so risky
 

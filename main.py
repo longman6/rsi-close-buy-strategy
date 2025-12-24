@@ -11,6 +11,7 @@ from src.slack_bot import SlackBot
 from src.slack_bot import SlackBot
 from src.strategy import Strategy
 from src.trade_manager import TradeManager
+from run_daily_advice import run_daily_advice # Gemini Advice Job
 import parse_trade_log
 
 # Setup Logging
@@ -40,7 +41,8 @@ state = {
     "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
     "last_reset_date": None,
     "is_holiday": False,
-    "exclude_list": set()
+    "exclude_list": set(),
+    "gemini_advice_done": False
 }
 
 def load_exclusion_list(kis=None):
@@ -98,8 +100,10 @@ def reset_daily_state(kis):
         state["sell_check_done"] = False
         state["sell_exec_done"] = False
         state["sell_exec_done"] = False
+        state["sell_exec_done"] = False
         state["buy_targets"] = []
-        state["exclude_list"] = load_exclusion_list(kis) # Load once per day with names
+        state["exclude_list"] = load_exclusion_list(kis)
+        state["gemini_advice_done"] = False
         state["last_reset_date"] = today
         
         # Check Holiday
@@ -162,6 +166,24 @@ def main():
 
             # Holiday Skip - Removed to allow Holdings Display
             # if state["is_holiday"]: ...
+
+            # 0. 07:00 Gemini Buy Advice (Runs once)
+            # Window: 07:00 ~ 07:30
+            if not state["is_holiday"]:
+                if current_time >= "07:00" and current_time <= "07:30":
+                     if not state["gemini_advice_done"]:
+                         logging.info("🤖 Starting Daily Gemini Advice Job...")
+                         try:
+                             run_daily_advice() # This runs the full analysis and DB save
+                             slack.send_message("🤖 Daily Gemini Analysis Completed.")
+                         except Exception as e:
+                             logging.error(f"Gemini Job Failed: {e}")
+                             slack.send_message(f"⚠️ Gemini Job Error: {e}")
+                         state["gemini_advice_done"] = True
+                elif current_time > "07:30" and not state["gemini_advice_done"]:
+                     # If started late, skip
+                     logging.info(f"⏭️ [Skip] Gemini Advice window passed ({current_time}).")
+                     state["gemini_advice_done"] = True
 
             # 1. 08:30 Analysis & Buy Candidate Selection
             # 1. 08:30 Analysis & Buy Candidate Selection
