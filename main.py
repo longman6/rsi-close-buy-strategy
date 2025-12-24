@@ -256,6 +256,12 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
         # Check Loss Cooldown
         if not trade_manager.can_buy(code):
             continue
+
+        # Check Dangerous Status (Suspended/Warning)
+        is_dangerous, reason = kis.check_dangerous_stock(code)
+        if is_dangerous:
+             logging.info(f"🚫 Skipping {code}: {reason}")
+             continue
         
         # Delay (Mock vs Real)
         time.sleep(1.5 if kis.is_mock else 0.2)

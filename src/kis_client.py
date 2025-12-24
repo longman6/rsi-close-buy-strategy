@@ -537,6 +537,43 @@ class KISClient:
         # For safety, we will implement this check in Strategy using FinanceDataReader if KIS is ambiguous.
         pass
 
+    def check_dangerous_stock(self, code):
+        """
+        Check if the stock is in a dangerous state (Suspended, Admin Issue, Market Warning).
+        Returns: (is_dangerous: bool, reason: str)
+        """
+        # Reuse get_current_price which fetches FHKST01010100
+        # We need the RAW data, but get_current_price returns 'output' dict.
+        data = self.get_current_price(code)
+        if not data:
+            return True, "No Data" # Can't verify, so risky
+
+        # 1. Issue Status Class Code (iscd_stat_cls_code)
+        # 55: Normal (KOSPI 200), 57: Normal
+        # 58: Trading Suspended (confirmed with Fadu)
+        # 51: Admin Issue, 52: Inv Caution, 53: Warning, 54: Danger
+        iscd_code = data.get('iscd_stat_cls_code', '')
+        if iscd_code in ['51', '52', '53', '54', '58', '59']:
+             return True, f"Bad Status Code ({iscd_code})"
+
+        # 2. Market Warning (mrkt_warn_cls_code)
+        # 00: Normal, 01: Caution, 02: Warning, 03: Danger
+        warn_code = data.get('mrkt_warn_cls_code', '00')
+        if warn_code != '00':
+             return True, f"Market Warning ({warn_code})"
+             
+        # 3. Management Issue (mang_issu_cls_code)
+        # N: Normal. Not 'N' -> Issue (assuming 'Y' or code)
+        mang_code = data.get('mang_issu_cls_code', 'N')
+        if mang_code != 'N':
+             return True, f"Management Issue ({mang_code})"
+             
+        # 4. Investment Caution (invt_caful_yn)
+        if data.get('invt_caful_yn', 'N') == 'Y':
+             return True, "Investment Caution"
+
+        return False, "Safe"
+
     def get_outstanding_orders(self):
         """
         Fetch unfilled (outstanding) orders.
