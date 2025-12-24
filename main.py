@@ -39,8 +39,48 @@ state = {
     "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
     "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
     "last_reset_date": None,
-    "is_holiday": False
+    "is_holiday": False,
+    "exclude_list": set()
 }
+
+def load_exclusion_list(kis=None):
+    """Load excluded stock codes from file and optionally log names"""
+    exclude_file = "exclude_list.txt"
+    excluded = set()
+    if os.path.exists(exclude_file):
+        try:
+            with open(exclude_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"): continue
+                    excluded.add(line)
+            
+            logging.info(f"🚫 Exclusion List Loaded: {len(excluded)} items.")
+            
+            # If KIS client is provided, fetch and display names
+            if kis and excluded:
+                logging.info("   [Excluded Stocks]")
+                for code in excluded:
+                    name = "Unknown"
+                    try:
+                        # Fetch price info to get name
+                        # Note: get_current_price might fail if market is closed or rate limited,
+                        # but usually returns static info.
+                        # We use a short sleep to avoid TPS limits if list is long.
+                        time.sleep(0.1) 
+                        curr = kis.get_current_price(code)
+                        if curr:
+                            # Try to find name in output
+                            # Common fields: 'rprs_mrkt_kor_name', 'hts_kor_isnm'
+                            # Output of inquire-price (FHKST01010100)
+                            name = curr.get('hts_kor_isnm') or "Unknown"
+                    except Exception:
+                        pass
+                    logging.info(f"   - {code} : {name}")
+
+        except Exception as e:
+            logging.error(f"Failed to load exclusion list: {e}")
+    return excluded
 
 def get_now_kst():
     """Get current time in KST (Asia/Seoul)"""
@@ -57,7 +97,9 @@ def reset_daily_state(kis):
         state["buy_verified"] = False
         state["sell_check_done"] = False
         state["sell_exec_done"] = False
+        state["sell_exec_done"] = False
         state["buy_targets"] = []
+        state["exclude_list"] = load_exclusion_list(kis) # Load once per day with names
         state["last_reset_date"] = today
         
         # Check Holiday
@@ -94,15 +136,8 @@ def main():
     
     slack.send_message("🤖 Bot Loop Started. Waiting for schedule...")
 
-    state["last_reset_date"] = get_now_kst().strftime("%Y-%m-%d")
-    
-    # Check Initial Holiday Status
-    today_str = state["last_reset_date"].replace("-", "")
-    if not kis.is_trading_day(today_str):
-        state["is_holiday"] = True
-        logging.info(f"🏖️ Today is a Holiday/Weekend. Trading Paused.")
-    else:
-        state["is_holiday"] = False
+    # FORCE Initial State Reset (to load exclusion list and check holiday)
+    reset_daily_state(kis)
 
     # Log Startup Time in KST
     startup_kst = get_now_kst().strftime("%Y-%m-%d %H:%M:%S")
@@ -174,7 +209,7 @@ def main():
             # 5. 15:26 Sell Execution (Market/Best)
             if not state["is_holiday"]:
                 if current_time >= config.TIME_SELL_EXEC and not state["sell_exec_done"]:
-                    run_sell_execution(kis, slack, trade_manager)
+                    run_sell_execution(kis, slack, strategy, trade_manager)
                     state["sell_exec_done"] = True
             
             time.sleep(1)
@@ -214,6 +249,8 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
 
     cnt = 0
     for code in universe:
+        if code in state["exclude_list"]:
+            continue # Exclude explicitly
         if any(h['pdno'] == code for h in current_holdings): continue
         
         # Check Loss Cooldown
@@ -285,6 +322,10 @@ def run_pre_order(kis, slack, trade_manager):
 
     for target in state["buy_targets"]:
         code = target['code']
+        if code in state["exclude_list"]:
+            logging.info(f"🚫 Pre-Order Skipped {code} (Excluded)")
+            continue
+
         # Fetch Expected Price
         curr = kis.get_current_price(code)
         
@@ -452,6 +493,15 @@ def run_sell_check(kis, slack, strategy, trade_manager):
             # Lets run analyze_stock on current df.
             pass
             
+        # Check Exclusion
+        if code in state["exclude_list"]:
+             # If excluded, DO NOT SELL automatically? Or FORCE SELL?
+             # User said: "Don't buy OR SELL". So we skip selling logic.
+             # But if it's in portfolio, maybe we should just ignore it.
+             # "매수도 매도도 하지 않도록" -> Skip.
+             # logging.info(f"🚫 Sell Check Skipped {code} (Excluded)")
+             continue
+
         df = strategy.calculate_indicators(df)
         
         forced_sell = trade_manager.check_forced_sell(code)
@@ -466,7 +516,7 @@ def run_sell_check(kis, slack, strategy, trade_manager):
              # but to keep it simple, we can just sell at 15:26 by re-checking or storing.
              pass
 
-def run_sell_execution(kis, slack, trade_manager):
+def run_sell_execution(kis, slack, strategy, trade_manager):
     """15:26 Execute Market Sell for targets"""
     logging.info("💸 [15:26] Executing Market Sells...")
     slack.send_message("💸 [15:26] Market Sell Execution")
@@ -475,7 +525,7 @@ def run_sell_execution(kis, slack, trade_manager):
     # Efficient way: Logic same as 'run_sell_check' but SEND ORDER.
     
     balance = kis.get_balance()
-    strategy = Strategy()
+    # strategy = Strategy() # Use injected strategy
     
     for h in balance['holdings']:
         qty = int(h['hldg_qty'])
@@ -483,6 +533,10 @@ def run_sell_execution(kis, slack, trade_manager):
         
         code = h['pdno']
         name = h['prdt_name']
+
+        if code in state["exclude_list"]:
+            logging.info(f"🚫 Sell Execution Skipped {name} ({code}) (Excluded)")
+            continue
         
         # Get Data & RSI
         df = kis.get_daily_ohlcv(code)

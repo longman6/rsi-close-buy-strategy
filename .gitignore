@@ -42,3 +42,4 @@ Thumbs.db
 # Output
 ticker.rsi.txt
 trade_history.json
+exclude_list.txt
