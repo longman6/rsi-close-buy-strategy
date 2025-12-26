@@ -35,12 +35,18 @@ def get_trade_manager():
 
 def main():
     st.sidebar.title("🤖 RSI Power Bot")
-    page = st.sidebar.radio("Navigation", ["📊 Dashboard (KIS)", "🧠 Gemini Advisor"])
+    page = st.sidebar.radio("Navigation", [
+        "📊 Dashboard (KIS)", 
+        "🧠 Gemini (Legacy History)", 
+        "📉 KOSDAQ 150 RSI Analysis"
+    ])
     
     if page == "📊 Dashboard (KIS)":
         render_dashboard()
+    elif page == "🧠 Gemini (Legacy History)":
+        render_gemini_history()
     else:
-        render_advisor()
+        render_rsi_analysis()
 
 def render_dashboard():
     st.title("📊 Real-time Dashboard")
@@ -228,70 +234,100 @@ def render_dashboard():
         else:
              st.info("No local history records.")
 
-def render_advisor():
-    st.title("🧠 Gemini Buy Advisor")
-    st.markdown("Automated analysis of Low-RSI KOSDAQ stocks using Gemini & real-time news.")
+def render_gemini_history():
+    st.title("🧠 Gemini Buy Advisor History")
+    st.markdown("Legacy analysis results with Gemini AI feedback.")
 
-    # Sidebar: Date Selection
     db = DBManager()
-    available_dates = db.get_all_dates()
+    available_dates = db.get_all_dates() # This fetches mixed dates but getting advice filtering handles it
     
     if not available_dates:
-        st.warning("No data found in database yet. Run the daily job first.")
+        st.warning("No data found.")
         return
 
-    selected_date = st.sidebar.selectbox("Select Date", available_dates, index=0)
-    
-    st.header(f"📅 Analysis for {selected_date}")
-    
-    # Fetch Data
+    selected_date = st.sidebar.selectbox("Select Date", available_dates, index=0, key="gemini_date")
+    st.header(f"📅 Gemini Advice for {selected_date}")
+
     results = db.get_advice_by_date(selected_date)
     
     if not results:
-        st.info("No advice records for this date.")
+        st.info("No Gemini advice records for this date.")
         return
     
-    # Convert to DataFrame for summary stats
     df = pd.DataFrame(results)
     
-    # Metrics
-    total = len(df)
-    yes_count = len(df[df['recommendation'] == 'YES'])
-    no_count = len(df[df['recommendation'] == 'NO'])
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Candidates", total)
-    col2.metric("Recommended (YES)", yes_count)
-    col3.metric("Rejected (NO)", no_count)
-    
-    st.divider()
-    
-    # Detailed List with Expanders
-    # Group by Recommendation
+    # Summary
     yes_df = df[df['recommendation'] == 'YES']
     no_df = df[df['recommendation'] == 'NO']
     
-    st.subheader("✅ Recommended to BUY")
-    if yes_df.empty:
-        st.write("No 'YES' recommendations.")
-    else:
-        for _, row in yes_df.iterrows():
-            with st.expander(f"**{row['name']}** ({row['code']}) | RSI: {row['rsi']:.2f}"):
-                url = f"https://finance.naver.com/item/main.naver?code={row['code']}"
-                st.markdown(f"### <a href='{url}' target='_blank'>{row['name']}</a>", unsafe_allow_html=True)
-                st.write(f"**Decision:** {row['recommendation']}")
-                st.info(row['reasoning'])
+    col1, col2 = st.columns(2)
+    col1.metric("Recommended (YES)", len(yes_df))
+    col2.metric("Rejected (NO)", len(no_df))
     
-    st.subheader("❌ Recommended to HOLD/SKIP")
-    if no_df.empty:
-        st.write("No 'NO' recommendations.")
+    st.subheader("✅ Recommended")
+    for _, row in yes_df.iterrows():
+        with st.expander(f"{row['name']} ({row['code']}) | RSI: {row['rsi']:.2f}"):
+            st.info(row['reasoning'])
+
+    st.subheader("❌ Rejected")
+    for _, row in no_df.iterrows():
+        with st.expander(f"{row['name']} ({row['code']}) | RSI: {row['rsi']:.2f}"):
+            st.caption(row['reasoning'])
+
+
+def render_rsi_analysis():
+    st.title("📉 KOSDAQ 150 Daily RSI")
+    st.markdown("Simple RSI(3) screening results.")
+
+    db = DBManager()
+    # We might want to filter dates that actually have RSI data? 
+    # For now get_all_dates returns all.
+    available_dates = db.get_all_dates()
+    
+    if not available_dates:
+        st.warning("No data found.")
+        return
+
+    selected_date = st.sidebar.selectbox("Select Date", available_dates, index=0, key="rsi_date")
+    st.header(f"📅 RSI Analysis for {selected_date}")
+    
+    results = db.get_rsi_by_date(selected_date)
+    
+    if not results:
+        st.info("No RSI analysis records for this date.")
+        return
+    
+    df = pd.DataFrame(results)
+    
+    if not df.empty:
+        # Format
+        df['rsi'] = df['rsi'].map(lambda x: f"{x:.2f}" if pd.notna(x) else "NaN")
+        
+        # Helper for safe formatting
+        def safe_fmt_close(x):
+            try:
+                if pd.isna(x) or x == "": return ""
+                if isinstance(x, bytes): return "Err"
+                return f"{int(float(x)):,}"
+            except: return "Err"
+
+        df['close_price'] = df['close_price'].map(safe_fmt_close)
+        
+        # Display Columns
+        df_display = df[['code', 'name', 'rsi', 'close_price']].copy()
+        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Close']
+        
+        # Naver Link
+        df_display['Name'] = df_display.apply(
+            lambda row: f"<a href='https://finance.naver.com/item/main.naver?code={row['Code']}' target='_blank'>{row['Name']}</a>", 
+            axis=1
+        )
+        
+        st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
+        st.caption(f"Total: {len(df)} stocks")
+        
     else:
-        for _, row in no_df.iterrows():
-            with st.expander(f"**{row['name']}** ({row['code']}) | RSI: {row['rsi']:.2f}"):
-                url = f"https://finance.naver.com/item/main.naver?code={row['code']}"
-                st.markdown(f"### <a href='{url}' target='_blank'>{row['name']}</a>", unsafe_allow_html=True)
-                st.write(f"**Decision:** {row['recommendation']}")
-                st.caption(row['reasoning'])
+        st.info("No data available.")
 
     if st.sidebar.button("Refresh Data"):
         st.rerun()
