@@ -44,3 +44,5 @@ ticker.rsi.txt
 trade_history.json
 exclude_list.txt
 advice_history.db
+stock_analysis.db
+stock_analysis.db
