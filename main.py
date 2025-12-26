@@ -14,7 +14,7 @@ from src.trade_manager import TradeManager
 from src.db_manager import DBManager
             # 0. 07:00 Gemini Buy Advice (Removed - Replaced by Cron analyze_kosdaq150.py)
             # if current_time == "07:00": ...
-import parse_trade_log
+from scripts import parse_trade_log
 
 # Setup Logging
 # Setup Logging

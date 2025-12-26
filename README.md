@@ -175,27 +175,38 @@ python3 rsi_strategy_backtest.py
 000660  # SK하이닉스
 ```
 
-## 프로젝트 구조
+## 📂 Project Structure
 
 ```
 RSI_POWER_ZONE/
-├── main.py                    # 메인 트레이딩 봇
-├── run_daily_advice.py        # Gemini 분석 작업
-├── dashboard.py               # Streamlit 대시보드
-├── config.py                  # 설정 로더
-├── src/
-│   ├── kis_client.py         # 한국투자증권 API 클라이언트
-│   ├── strategy.py           # RSI 전략 로직
-│   ├── trade_manager.py      # 거래 이력 관리
-│   ├── gemini_client.py      # Gemini AI 클라이언트
-│   ├── db_manager.py         # SQLite 데이터베이스 관리
-│   └── slack_bot.py          # Slack 알림
+├── main.py                 # 🚀 Main Bot Entry Point
+├── dashboard.py            # 📊 Streamlit Dashboard
+├── analyze_kosdaq150.py    # 🧠 Daily AI Analysis (Cron)
+├── config.py               # ⚙️ Configuration
+├── run.sh                  # 🏃 Execution Script
+├── src/                    # 🧱 Core Modules
+│   ├── kis_client.py       # KIS API Client
+│   ├── db_manager.py       # Database Manager
+│   ├── ai_manager.py       # AI Aggregation Manager
+│   ├── strategy.py         # Technical Indicators
+│   ├── trade_manager.py    # Trade Execution Logic
+│   └── utils.py            # Common Utilities (KST Time, etc)
+├── scripts/                # 🛠️ Utility Scripts
+│   ├── parse_trade_log.py  # Log Parser
+│   └── ...
+├── tests/                  # 🧪 Tests & Debugging
+│   ├── debug/              # Debugging Scripts
+│   ├── unit/               # Unit Tests
+│   └── integration/        # Integration/Validation Tests
+└── stock_analysis.db       # 🗄️ SQLite Database
+```
+
 ├── requirements.txt           # Python 의존성
 ├── .env.example              # 환경 변수 예시
 ├── exclude_list.txt          # 제외 종목 리스트
 ├── trade_history.json        # 거래 이력 (자동 생성)
-├── stock_analysis.db         # Gemini 분석 DB (자동 생성)
 └── trade_log.txt             # 실행 로그 (자동 생성)
+
 ```
 
 ## 매매 전략 상세

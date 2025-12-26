@@ -12,6 +12,7 @@ from src.kis_client import KISClient
 from src.strategy import Strategy
 from src.ai_manager import AIManager # New
 from src.db_manager import DBManager
+from src.utils import get_now_kst
 import os
 
 # Setup Logging for Cron
