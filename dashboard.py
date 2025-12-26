@@ -251,7 +251,7 @@ def render_ai_advice_page():
     # Fetch Base RSI Results
     rsi_results = db.get_rsi_by_date(selected_date)
     # Fetch AI Detailed Advice
-    advice_results = db.get_ai_advice(selected_date)
+    ai_advice_list = db.get_ai_advice(selected_date)
     
     if not rsi_results:
         st.info("No analysis records for this date.")
@@ -264,7 +264,7 @@ def render_ai_advice_page():
         return
 
     # Check if there is advice for this date
-    if not advice_results:
+    if not ai_advice_list:
         st.info(f"No AI advice generated for {selected_date}.")
         return
 
@@ -272,7 +272,7 @@ def render_ai_advice_page():
     advice_map = {} # code -> list of dicts
     all_models = set()
     
-    for row in advice_results:
+    for row in ai_advice_list:
         c = row['code']
         m = row['model']
         all_models.add(m)
@@ -380,7 +380,7 @@ def render_full_rsi_page():
     st.header(f"📅 Daily RSI Scan for {selected_date}")
     
     rsi_results = db.get_rsi_by_date(selected_date)
-    advice_results = db.get_ai_advice(selected_date)
+    ai_advice_list = db.get_ai_advice(selected_date)
     
     if not rsi_results:
         st.info("No RSI analysis records for this date.")
@@ -391,10 +391,10 @@ def render_full_rsi_page():
     if not df.empty:
         # Build Consensus for Table
         advice_map = {} # code -> summary
-        if advice_results:
+        if ai_advice_list:
              # Group first
              grouped = {}
-             for row in advice_results:
+             for row in ai_advice_list:
                  c = row['code']
                  if c not in grouped: grouped[c] = []
                  grouped[c].append(row)

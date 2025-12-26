@@ -158,7 +158,6 @@ State resets daily based on `last_reset_date`.
    - `last_trade`: {code: {sell_date, pnl_pct}}
 
 2. **stock_analysis.db**: SQLite database storing Gemini advice results
-   - Table: `advice_results` (date, code, name, rsi, recommendation, reasoning)
 
 3. **token.json**: Cached KIS OAuth token
 4. **trade_log.txt**: Comprehensive execution log with KST timestamps
