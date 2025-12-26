@@ -55,12 +55,11 @@ class GeminiClient:
         # 2. Construct Prompt
         prompt = f"""
 Search for the latest news, analyst reports, and social media (SNS) sentiment for the KOSDAQ stock "{stock_name}" ({stock_code}).
-Current RSI: {rsi_value:.2f}
 
 
       CRITICAL REQUIREMENT: Only consider information published within the LAST 24 HOURS.
       
-      User's Goal: Short-term rebound strategy (3-10 days investment horizon) after a recent decline.
+      User's Goal: Short-term rebound strategy (1-10 days investment horizon) after a recent decline.
       
       Task:
       1. Analyze if there are any ultra-recent positive catalysts or bottoming signals from the last 24 hours.

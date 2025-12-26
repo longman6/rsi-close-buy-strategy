@@ -634,9 +634,6 @@ class KISClient:
         tr_id = "VTTC0803U" if self.is_mock else "TTTC0803U"
         
         # Order Cancel/Correction Code
-        # 01: Cancel, 02: Correction
-        cncl_dvsn = "02" if is_cancel else "01" # Wait, KIS docs usually: 01 for Correction, 02 for Cancel? 
-        # Checking docs:
         # 01: Correction (Revise)
         # 02: Cancel
         cncl_dvsn = "02" if is_cancel else "01"
@@ -658,6 +655,9 @@ class KISClient:
              body["QTY_ALL_ORD_YN"] = "Y"
         
         res = self._send_request("POST", path, tr_id, body=body)
+        if res is None:
+             return False, "Network Error"
+             
         data = res.json()
         if data['rt_cd'] == '0':
             logging.info(f"[KIS] Order {'Cancel' if is_cancel else 'Revise'} Success: {order_no}")
@@ -665,3 +665,38 @@ class KISClient:
         else:
              logging.error(f"[KIS] Order {'Cancel' if is_cancel else 'Revise'} Failed: {data['msg1']}")
              return False, data['msg1']
+
+    def get_period_trades(self, start_date, end_date):
+        """
+        Fetch Trade History (Concluded Orders) for a period.
+        TR_ID: TTTC8001R (Real) / VTTC8001R (Mock)
+        Path: /uapi/domestic-stock/v1/trading/inquire-daily-ccld
+        """
+        path = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+        tr_id = "VTTC8001R" if self.is_mock else "TTTC8001R"
+        
+        params = {
+            "CANO": self.account_no,
+            "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
+            "INQR_STRT_DT": start_date, # YYYYMMDD
+            "INQR_END_DT": end_date,   # YYYYMMDD
+            "SLL_BUY_DVSN_CD": "00",   # 00: All, 01: Sell, 02: Buy
+            "INQR_DVSN": "00",         # 00: Order order? 01: Order No?
+            "PDNO": "",
+            "CCLD_DVSN": "01",         # 01: Concluded (Executed)
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        res = self._send_request("GET", path, tr_id, params=params)
+        if res and res.status_code == 200:
+            data = res.json()
+            if data['rt_cd'] == '0':
+                return data['output1'] 
+            else:
+                logging.error(f"[KIS] Period Trades Error: {data['msg1']}")
+        return []

@@ -11,6 +11,7 @@ from src.slack_bot import SlackBot
 from src.slack_bot import SlackBot
 from src.strategy import Strategy
 from src.trade_manager import TradeManager
+from src.db_manager import DBManager
 from run_daily_advice import run_daily_advice # Gemini Advice Job
 import parse_trade_log
 
@@ -169,6 +170,9 @@ def main():
 
             # 0. 07:00 Gemini Buy Advice (Runs once)
             # Window: 07:00 ~ 07:30
+            if current_time == "07:00":
+                logging.info(f"[DEBUG] 07:00 Tick. Holiday={state['is_holiday']}, Done={state['gemini_advice_done']}")
+
             if not state["is_holiday"]:
                 if current_time >= "07:00" and current_time <= "07:30":
                      if not state["gemini_advice_done"]:
@@ -267,12 +271,27 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
     
     # Optimization: 250 days fetch
     # Use KST for date strings too, though API handles string YYYYMMDD
-    start_date = (get_now_kst() - timedelta(days=250)).strftime("%Y%m%d")
+    now_kst = get_now_kst()
+    start_date = (now_kst - timedelta(days=250)).strftime("%Y%m%d")
+    today_str = now_kst.strftime("%Y-%m-%d")
+
+    # Fetch Gemini Advice for Today
+    db = DBManager()
+    advice_list = db.get_advice_by_date(today_str)
+    rejected_codes = {item['code'] for item in advice_list if item['recommendation'] == 'NO'}
+    if rejected_codes:
+        logging.info(f"🤖 Gemini Rejected {len(rejected_codes)} stocks: {rejected_codes}")
 
     cnt = 0
     for code in universe:
         if code in state["exclude_list"]:
             continue # Exclude explicitly
+        
+        # Check Gemini Rejection
+        if code in rejected_codes:
+            # logging.info(f"🚫 Skipping {code} (Gemini Rejected)")
+            continue
+
         if any(h['pdno'] == code for h in current_holdings): continue
         
         # Check Loss Cooldown
