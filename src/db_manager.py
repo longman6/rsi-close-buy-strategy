@@ -15,6 +15,7 @@ class DBManager:
         try:
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
+                # Legacy/Gemini Table
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS advice_results (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,6 +25,19 @@ class DBManager:
                         rsi REAL,           -- RSI Value
                         recommendation TEXT,-- 'YES' or 'NO'
                         reasoning TEXT,     -- Detailed Reasoning
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # New Simple RSI Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS daily_rsi (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date TEXT,          -- YYYY-MM-DD
+                        code TEXT,          -- Stock Code
+                        name TEXT,          -- Stock Name
+                        rsi REAL,           -- RSI Value
+                        close_price REAL,   -- Close Price
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -64,14 +78,51 @@ class DBManager:
             logging.error(f"[DB] Fetch Error: {e}")
         return results
 
-    def get_all_dates(self) -> List[str]:
-        """Get unique dates available in DB."""
-        dates = []
+    def save_rsi_result(self, date: str, code: str, name: str, rsi: float, close_price: float):
+        """Save a single RSI analysis record."""
         try:
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
-                cursor.execute("SELECT DISTINCT date FROM advice_results ORDER BY date DESC")
-                dates = [row[0] for row in cursor.fetchall()]
+                cursor.execute("""
+                    INSERT INTO daily_rsi (date, code, name, rsi, close_price)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (date, code, name, rsi, close_price))
+                conn.commit()
+        except Exception as e:
+            logging.error(f"[DB] Save RSI Error: {e}")
+
+    def get_rsi_by_date(self, date: str) -> List[Dict]:
+        """Fetch all RSI records for a specific date."""
+        results = []
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM daily_rsi 
+                    WHERE date = ? 
+                    ORDER BY rsi ASC
+                """, (date,))
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append(dict(row))
+        except Exception as e:
+            logging.error(f"[DB] Fetch RSI Error: {e}")
+        return results
+
+    def get_all_dates(self) -> List[str]:
+        """Get unique dates available in DB (Merging both advice and rsi tables)."""
+        dates = set()
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                # From Advice
+                cursor.execute("SELECT DISTINCT date FROM advice_results")
+                dates.update([row[0] for row in cursor.fetchall()])
+                # From RSI
+                cursor.execute("SELECT DISTINCT date FROM daily_rsi")
+                dates.update([row[0] for row in cursor.fetchall()])
+                
         except Exception as e:
             logging.error(f"[DB] Date Fetch Error: {e}")
-        return dates
+        return sorted(list(dates), reverse=True)
