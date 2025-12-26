@@ -68,7 +68,8 @@ def analyze_kosdaq150():
     # Market Day Check
     try:
         from pykrx import stock
-        today_check = datetime.now().strftime("%Y%m%d")
+        # Use KST
+        today_check = get_now_kst().strftime("%Y%m%d")
         nearest_business_day = stock.get_nearest_business_day_in_a_week()
         
         if today_check == nearest_business_day:
@@ -95,14 +96,14 @@ def analyze_kosdaq150():
     universe = get_kosdaq150_universe()
     logging.info(f"Loaded {len(universe)} stocks from KOSDAQ 150.")
     
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = get_now_kst().strftime("%Y-%m-%d")
     
     for i, item in enumerate(universe):
         code = item['code']
         name = item['name']
         
         # Optimize: 250 days history
-        start_dt = (datetime.now() - timedelta(days=250)).strftime("%Y%m%d")
+        start_dt = (get_now_kst() - timedelta(days=250)).strftime("%Y%m%d")
         
         try:
             # 1. Fetch OHLCV

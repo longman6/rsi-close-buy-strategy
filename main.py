@@ -84,11 +84,7 @@ def load_exclusion_list(kis=None):
             logging.error(f"Failed to load exclusion list: {e}")
     return excluded
 
-def get_now_kst():
-    """Get current time in KST (Asia/Seoul)"""
-    tz_kst = pytz.timezone('Asia/Seoul')
-    # If system is UTC, use utcnow().astimezone
-    return datetime.now(pytz.utc).astimezone(tz_kst)
+from src.utils import get_now_kst
 
 def reset_daily_state(kis):
     today = get_now_kst().strftime("%Y-%m-%d")
