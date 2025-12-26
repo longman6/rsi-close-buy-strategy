@@ -1,0 +1,22 @@
+{
+    "gemini": {
+        "enabled": true,
+        "model": "gemini-3-flash-preview",
+        "env_key": "GEMINI_API_KEY"
+    },
+    "claude": {
+        "enabled": true,
+        "model": "claude-sonnet-4-5-20250929",
+        "env_key": "CLAUDE_API_KEY"
+    },
+    "openai": {
+        "enabled": true,
+        "model": "gpt-5.2",
+        "env_key": "OPENAI_API_KEY"
+    },
+    "grok": {
+        "enabled": true,
+        "model": "grok-4-1-fast-reasoning",
+        "env_key": "GROK_API_KEY"
+    }
+}

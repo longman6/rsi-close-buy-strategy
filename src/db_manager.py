@@ -3,7 +3,7 @@ import datetime
 import logging
 from typing import List, Dict, Optional
 
-DB_FILE = "advice_history.db"
+DB_FILE = "stock_analysis.db"
 
 class DBManager:
     def __init__(self, db_file=DB_FILE):
@@ -29,7 +29,7 @@ class DBManager:
                     )
                 """)
                 
-                # New Simple RSI Table
+                # New Simple RSI Table (Pure Data)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS daily_rsi (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,12 +41,34 @@ class DBManager:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+
+                # Multi-LLM Advice Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS ai_advice (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date TEXT,          -- YYYY-MM-DD
+                        code TEXT,          -- Stock Code
+                        model TEXT,         -- AI Model Name (Gemini, Claude, etc)
+                        recommendation TEXT,-- 'YES', 'NO'
+                        reasoning TEXT,     -- Specific reasoning
+                        specific_model TEXT, -- Specific Model ID (e.g. gemini-1.5-flash)
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Migration: Add specific_model column if it doesn't exist
+                cursor.execute("PRAGMA table_info(ai_advice)")
+                columns = [info[1] for info in cursor.fetchall()]
+                if 'specific_model' not in columns:
+                    logging.info("Migrating DB: Adding specific_model column to ai_advice")
+                    cursor.execute("ALTER TABLE ai_advice ADD COLUMN specific_model TEXT")
+                
                 conn.commit()
         except Exception as e:
             logging.error(f"[DB] Init Error: {e}")
 
     def save_advice(self, date: str, code: str, name: str, rsi: float, recommendation: str, reasoning: str):
-        """Save a single advice record."""
+        """Save a single advice record (Legacy)."""
         try:
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
@@ -60,7 +82,7 @@ class DBManager:
             logging.error(f"[DB] Save Error: {e}")
 
     def get_advice_by_date(self, date: str) -> List[Dict]:
-        """Fetch all advice records for a specific date."""
+        """Fetch all advice records for a specific date (Legacy)."""
         results = []
         try:
             with sqlite3.connect(self.db_file) as conn:
@@ -108,6 +130,44 @@ class DBManager:
                     results.append(dict(row))
         except Exception as e:
             logging.error(f"[DB] Fetch RSI Error: {e}")
+        return results
+
+    def save_ai_advice(self, date: str, code: str, model: str, recommendation: str, reasoning: str, specific_model: str = None):
+        """Save advice from a specific AI model."""
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO ai_advice (date, code, model, recommendation, reasoning, specific_model)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (date, code, model, recommendation, reasoning, specific_model))
+                conn.commit()
+        except Exception as e:
+            logging.error(f"[DB] Save AI Advice Error: {e}")
+
+    def get_ai_advice(self, date: str, code: str = None) -> List[Dict]:
+        """Fetch AI advice for a date, optionally filtered by code."""
+        results = []
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                if code:
+                    cursor.execute("""
+                        SELECT * FROM ai_advice 
+                        WHERE date = ? AND code = ?
+                    """, (date, code))
+                else:
+                    cursor.execute("""
+                        SELECT * FROM ai_advice 
+                        WHERE date = ? 
+                    """, (date,))
+                
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append(dict(row))
+        except Exception as e:
+            logging.error(f"[DB] Fetch AI Advice Error: {e}")
         return results
 
     def get_all_dates(self) -> List[str]:

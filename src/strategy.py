@@ -12,56 +12,23 @@ class Strategy:
         
     def get_universe(self):
         """
-        Get KOSDAQ 150 Tickers.
-        Returns a list of ticker codes (without .KQ extension usually for KIS API if KIS uses 6 digits).
-        KIS uses 6 digits e.g. '005930'. FDR uses '005930'.
+        Get KOSDAQ 150 Tickers using PyKRX (Index 2203).
+        Returns a list of ticker codes (strings).
         """
         try:
-            import FinanceDataReader as fdr
-            # KOSDAQ 150 Index Members
-            # Note: FDR might not have a direct 'KOSDAQ 150' list in all versions.
-            # Using KOSDAQ market cap top 150 is a good approximation if index list fails,
-            # but FDR usually supports 'KOSDAQ'.
-            # Ideally we want the actual constituents. 
-            # For simplicity and robustness as per previous script:
-            df_krx = fdr.StockListing('KOSDAQ')
-            
-            # Filter Strategy:
-            # 1. Market Cap Top 150 (approx for KOSDAQ 150)
-            # 2. Filter out Admin Issues (Managed Items)
-            
-            # Check for Admin Issue column
-            # Common columns: Code, Name, Market, Dept, Close, ChangeCode, Changes, ChagesRatio, Open, High, Low, Volume, Amount, Marcap, Stocks, MarketId
-            # 'Dept' often contains '관리' (Admin) or '환기' (Caution)?
-            # 'Market' might be 'KOSDAQ GLOBAL', 'KOSDAQ' etc.
-            
-            # Sort by Marcap
-            col = 'Marcap' if 'Marcap' in df_krx.columns else 'Amount'
-            if col in df_krx.columns:
-                df_krx = df_krx.sort_values(by=col, ascending=False)
-            
-            # Basic Management Exclusion if column exists
-            # (Note: This is a heuristic. For strict KOSDAQ 150, one should check the index composition specifically, 
-            # but simple Market Cap top is accepted practice in the backtest provided).
-            
-            # Exclude SPACs, etc? User said "Managed Items".
-            # If 'Dept' column exists, check for '관리'.
-            if 'Dept' in df_krx.columns:
-                 df_krx = df_krx[~df_krx['Dept'].astype(str).str.contains('관리', na=False)]
-                 
-            # Take top 150
-            top_150 = df_krx.head(150)
-            return top_150['Code'].tolist()
+            from pykrx import stock
+            # KOSDAQ 150 Index Code: 2203
+            tickers = stock.get_index_portfolio_deposit_file("2203")
+            return tickers
             
         except Exception as e:
-            print(f"[Strategy] Error getting universe or FDR missing: {e}")
-            # Fallback to a small static list or return empty
+            print(f"[Strategy] PyKRX Universe Error: {e}")
             print("[Strategy] Using Fallback KOSDAQ Top list.")
-            # Top KOSDAQ stocks (Example list) - Ideally user should install FDR
+            # Fallback List (Major KOSDAQ 150 components)
             return [
-                '247540', '086520', '091990', '022100', '066970', # Ecopro BM, Ecopro, Celltrion Pharm, POSCO DX...
-                '028300', '293490', '263750', '216080', '035900',
-                '041510', '005290', '039030', '000250', '237690'
+                '247540', '086520', '028300', '066970', '403870', 
+                '035900', '025980', '293490', '068270', '357780',
+                '402280', '112040'
             ]
 
     def calculate_indicators(self, df):

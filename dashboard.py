@@ -37,16 +37,16 @@ def main():
     st.sidebar.title("🤖 RSI Power Bot")
     page = st.sidebar.radio("Navigation", [
         "📊 Dashboard (KIS)", 
-        "🧠 Gemini (Legacy History)", 
-        "📉 KOSDAQ 150 RSI Analysis"
+        "🧠 AI Advice", 
+        "📉 Full RSI List (KOSDAQ 150)"
     ])
     
     if page == "📊 Dashboard (KIS)":
         render_dashboard()
-    elif page == "🧠 Gemini (Legacy History)":
-        render_gemini_history()
+    elif page == "🧠 AI Advice":
+        render_ai_advice_page()
     else:
-        render_rsi_analysis()
+        render_full_rsi_page()
 
 def render_dashboard():
     st.title("📊 Real-time Dashboard")
@@ -234,54 +234,142 @@ def render_dashboard():
         else:
              st.info("No local history records.")
 
-def render_gemini_history():
-    st.title("🧠 Gemini Buy Advisor History")
-    st.markdown("Legacy analysis results with Gemini AI feedback.")
+def render_ai_advice_page():
+    st.title("🧠 AI Advice")
+    st.markdown("Detailed AI Analysis for Low RSI Stocks.")
 
     db = DBManager()
-    available_dates = db.get_all_dates() # This fetches mixed dates but getting advice filtering handles it
+    available_dates = db.get_all_dates()
     
     if not available_dates:
         st.warning("No data found.")
         return
 
-    selected_date = st.sidebar.selectbox("Select Date", available_dates, index=0, key="gemini_date")
-    st.header(f"📅 Gemini Advice for {selected_date}")
+    selected_date = st.sidebar.selectbox("Select Date", available_dates, index=0, key="ai_date")
+    st.header(f"📅 AI Analysis for {selected_date}")
 
-    results = db.get_advice_by_date(selected_date)
+    # Fetch Base RSI Results
+    rsi_results = db.get_rsi_by_date(selected_date)
+    # Fetch AI Detailed Advice
+    advice_results = db.get_ai_advice(selected_date)
     
-    if not results:
-        st.info("No Gemini advice records for this date.")
+    if not rsi_results:
+        st.info("No analysis records for this date.")
         return
     
-    df = pd.DataFrame(results)
+    df_rsi = pd.DataFrame(rsi_results)
     
-    # Summary
-    yes_df = df[df['recommendation'] == 'YES']
-    no_df = df[df['recommendation'] == 'NO']
+    if df_rsi.empty:
+        st.info("No data.")
+        return
+
+    # Check if there is advice for this date
+    if not advice_results:
+        st.info(f"No AI advice generated for {selected_date}.")
+        return
+
+    # Group Advice by Code AND Collect Models
+    advice_map = {} # code -> list of dicts
+    all_models = set()
     
-    col1, col2 = st.columns(2)
-    col1.metric("Recommended (YES)", len(yes_df))
-    col2.metric("Rejected (NO)", len(no_df))
+    for row in advice_results:
+        c = row['code']
+        m = row['model']
+        all_models.add(m)
+        if c not in advice_map: advice_map[c] = []
+        advice_map[c].append(row)
+
+    # Filter RSI stocks to only those that have AI advice
+    analyzed_codes = set(advice_map.keys())
+    analyzed_df = df_rsi[df_rsi['code'].isin(analyzed_codes)].copy()
     
-    st.subheader("✅ Recommended")
-    for _, row in yes_df.iterrows():
-        with st.expander(f"{row['name']} ({row['code']}) | RSI: {row['rsi']:.2f}"):
-            st.info(row['reasoning'])
+    if analyzed_df.empty:
+         st.warning("Mismatch: Advice exists but RSI records missing for those codes.")
+         return
 
-    st.subheader("❌ Rejected")
-    for _, row in no_df.iterrows():
-        with st.expander(f"{row['name']} ({row['code']}) | RSI: {row['rsi']:.2f}"):
-            st.caption(row['reasoning'])
+    # --- Model Selection ---
+    # Sort models alphabetically
+    sorted_models = sorted(list(all_models))
+    # Add "All (Consensus)" option
+    filter_options = ["All (Consensus)"] + sorted_models
+    
+    selected_model = st.selectbox("Select AI Model", filter_options)
+    
+    st.divider()
+    
+    st.subheader(f"🔍 Analysis Results ({len(analyzed_df)})")
+    
+    for _, row in analyzed_df.iterrows():
+        code = row['code']
+        name = row['name']
+        rsi = row['rsi']
+        
+        opinions = advice_map.get(code, [])
+        
+        # Filter opinions based on selection
+        if selected_model != "All (Consensus)":
+            opinions = [op for op in opinions if op['model'] == selected_model]
+            if not opinions:
+                continue # Skip stocks if the selected model didn't analyze them (unlikely if they are in analyzed_df from same date, but possible)
+        
+        # Calculate Summary/Display
+        if selected_model == "All (Consensus)":
+            yes_count = sum(1 for op in opinions if op['recommendation'] == 'YES')
+            total = len(opinions)
+            summary = f"{yes_count}/{total} YES"
+            if total > 0 and yes_count == total: summary = "ALL YES"
+            if sum(1 for op in opinions if op['recommendation'] == 'NO') == total: summary = "ALL NO"
+        else:
+            # Single Model View
+            op = opinions[0] # Should be only one per model per date per code
+            summary = op['recommendation']
+        
+        # Color for Summary
+        color = "grey"
+        if "YES" in summary: color = "green"
+        if "ALL NO" in summary or summary == "NO": color = "red"
+        
+        # Expander Title
+        price_fmt = f"{int(row['close_price']):,}" if pd.notna(row['close_price']) else "N/A"
+        title = f":{color}[{summary}] **{name}** ({code}) | RSI: {rsi:.2f} | Close: {price_fmt} KRW"
+        
+        with st.expander(title):
+            if not opinions:
+                st.caption("No advice details.")
+            else:
+                if selected_model != "All (Consensus)":
+                    # Single View
+                    op = opinions[0]
+                    rec = op['recommendation']
+                    reason = op['reasoning']
+                    if rec == "YES":
+                        st.success(f"**{op['model']} Recommendation: {rec}**\n\n{reason}")
+                    elif rec == "NO":
+                        st.error(f"**{op['model']} Recommendation: {rec}**\n\n{reason}")
+                    else:
+                        st.warning(f"**{op['model']} Recommendation: {rec}**\n\n{reason}")
+                else:
+                    # Tabs View (Consensus)
+                    model_names = [op['model'] for op in opinions]
+                    tabs = st.tabs(model_names)
+                    for i, tab in enumerate(tabs):
+                        op = opinions[i]
+                        with tab:
+                            rec = op['recommendation']
+                            reason = op['reasoning']
+                            if rec == "YES":
+                                st.success(f"**Recommendation: {rec}**\n\n{reason}")
+                            elif rec == "NO":
+                                st.error(f"**Recommendation: {rec}**\n\n{reason}")
+                            else:
+                                st.warning(f"**Recommendation: {rec}**\n\n{reason}")
 
 
-def render_rsi_analysis():
-    st.title("📉 KOSDAQ 150 Daily RSI")
-    st.markdown("Simple RSI(3) screening results.")
+def render_full_rsi_page():
+    st.title("📉 Full RSI List (KOSDAQ 150)")
+    st.markdown("Full RSI(3) screening results for all 150 stocks.")
 
     db = DBManager()
-    # We might want to filter dates that actually have RSI data? 
-    # For now get_all_dates returns all.
     available_dates = db.get_all_dates()
     
     if not available_dates:
@@ -289,21 +377,60 @@ def render_rsi_analysis():
         return
 
     selected_date = st.sidebar.selectbox("Select Date", available_dates, index=0, key="rsi_date")
-    st.header(f"📅 RSI Analysis for {selected_date}")
+    st.header(f"📅 Daily RSI Scan for {selected_date}")
     
-    results = db.get_rsi_by_date(selected_date)
+    rsi_results = db.get_rsi_by_date(selected_date)
+    advice_results = db.get_ai_advice(selected_date)
     
-    if not results:
+    if not rsi_results:
         st.info("No RSI analysis records for this date.")
         return
     
-    df = pd.DataFrame(results)
+    df = pd.DataFrame(rsi_results)
     
     if not df.empty:
-        # Format
-        df['rsi'] = df['rsi'].map(lambda x: f"{x:.2f}" if pd.notna(x) else "NaN")
+        # Build Consensus for Table
+        advice_map = {} # code -> summary
+        if advice_results:
+             # Group first
+             grouped = {}
+             for row in advice_results:
+                 c = row['code']
+                 if c not in grouped: grouped[c] = []
+                 grouped[c].append(row)
+             
+             for code, ops in grouped.items():
+                 yes = sum(1 for x in ops if x['recommendation'] == 'YES')
+                 total = len(ops)
+                 # Simple display
+                 if total == 0:
+                     advice_map[code] = "N/A"
+                 elif yes == total:
+                     advice_map[code] = "ALL YES"
+                 elif yes == 0:
+                     advice_map[code] = "ALL NO"
+                 else:
+                     advice_map[code] = f"{yes}/{total} YES"
+
+        # Apply to DF
+        df['AI Rec'] = df['code'].map(lambda x: advice_map.get(x, "")) # Empty if no advice
         
-        # Helper for safe formatting
+        # Sort: RSI Ascending
+        df = df.sort_values(by='rsi', ascending=True)
+
+        # Summary Metrics
+        total_stocks = len(df)
+        candidates = len(df[df['rsi'] < 35])
+        
+        c1, c2 = st.columns(2)
+        c1.metric("Total Analyzed", total_stocks)
+        c2.metric("Low RSI (<35)", candidates)
+        
+        st.divider()
+        
+        # Main Table format
+        df['rsi_fmt'] = df['rsi'].map(lambda x: f"{x:.2f}" if pd.notna(x) else "NaN")
+        
         def safe_fmt_close(x):
             try:
                 if pd.isna(x) or x == "": return ""
@@ -311,11 +438,11 @@ def render_rsi_analysis():
                 return f"{int(float(x)):,}"
             except: return "Err"
 
-        df['close_price'] = df['close_price'].map(safe_fmt_close)
+        df['close_fmt'] = df['close_price'].map(safe_fmt_close)
         
         # Display Columns
-        df_display = df[['code', 'name', 'rsi', 'close_price']].copy()
-        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Close']
+        df_display = df[['code', 'name', 'rsi_fmt', 'close_fmt', 'AI Rec']].copy()
+        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Close', 'Consensus']
         
         # Naver Link
         df_display['Name'] = df_display.apply(
@@ -323,8 +450,13 @@ def render_rsi_analysis():
             axis=1
         )
         
+        # Colorize Consensus
+        df_display['Consensus'] = df_display['Consensus'].apply(
+            lambda x: f"<span style='font-weight:bold; color:{'green' if 'YES' in x else 'red' if 'ALL NO' in x else 'gray'}'>{x}</span>" if x else ""
+        )
+        
         st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
-        st.caption(f"Total: {len(df)} stocks")
+        st.caption(f"Total: {len(df)} stocks. Sorted by RSI Ascending.")
         
     else:
         st.info("No data available.")

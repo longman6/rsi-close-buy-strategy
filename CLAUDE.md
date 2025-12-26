@@ -116,6 +116,7 @@ See `.env.example` for required variables.
 ### Mock vs Production Mode
 
 The system auto-detects mock mode by checking if `KIS_URL_BASE` contains "openapivts":
+
 - **Mock Mode**: Uses virtual trading endpoints (VTTC* TR IDs), extends delays, forces trading days
 - **Production Mode**: Uses real trading endpoints (TTTC* TR IDs), normal rate limits
 
@@ -142,6 +143,7 @@ The system auto-detects mock mode by checking if `KIS_URL_BASE` contains "openap
 ### Global State (in main.py)
 
 The `state` dict tracks daily execution flags:
+
 - `analysis_done`, `pre_order_done`, `buy_verified`, `sell_check_done`, `sell_exec_done`
 - `buy_targets`: List of stocks selected for buying with code, RSI, yesterday close, target qty
 - `exclude_list`: Set of stock codes loaded from `exclude_list.txt`
@@ -155,7 +157,7 @@ State resets daily based on `last_reset_date`.
    - `holdings`: {code: {buy_date}}
    - `last_trade`: {code: {sell_date, pnl_pct}}
 
-2. **advice_history.db**: SQLite database storing Gemini advice results
+2. **stock_analysis.db**: SQLite database storing Gemini advice results
    - Table: `advice_results` (date, code, name, rsi, recommendation, reasoning)
 
 3. **token.json**: Cached KIS OAuth token
@@ -164,6 +166,7 @@ State resets daily based on `last_reset_date`.
 ## Time Zone Handling
 
 All date/time operations use Korea Standard Time (KST/Asia/Seoul):
+
 - `get_now_kst()` helper function in main.py
 - Logging formatter uses KST converter
 - Holiday checks and date comparisons use KST
@@ -171,6 +174,7 @@ All date/time operations use Korea Standard Time (KST/Asia/Seoul):
 ## Exclusion List
 
 The `exclude_list.txt` file contains stock codes to skip for both buying and selling:
+
 - One code per line
 - Lines starting with `#` are ignored
 - Loaded on daily state reset
@@ -179,6 +183,7 @@ The `exclude_list.txt` file contains stock codes to skip for both buying and sel
 ## Gemini AI Integration
 
 The Gemini client uses `gemini-3-flash-preview` model to:
+
 1. Search for news via DuckDuckGo (last 24h, Korean region)
 2. Analyze sentiment and catalysts
 3. Return YES/NO buy recommendation with reasoning
@@ -204,6 +209,7 @@ The Gemini client uses `gemini-3-flash-preview` model to:
 ## Adding New Features
 
 When modifying trading logic:
+
 1. Always read current holdings/orders before making decisions
 2. Update both in-memory `state` and persistent `trade_history.json`
 3. Add appropriate Slack notifications for visibility
@@ -216,6 +222,7 @@ When modifying trading logic:
 Install via: `pip install -r requirements.txt`
 
 Core packages:
+
 - `pandas`, `numpy`: Data analysis
 - `requests`: HTTP client
 - `python-dotenv`: Environment variable management

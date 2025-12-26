@@ -68,6 +68,7 @@ cp .env.example .env
 `.env` 파일을 열어 다음 항목들을 설정합니다:
 
 #### 한국투자증권 API
+
 1. [한국투자증권 OpenAPI](https://apiportal.koreainvestment.com/) 접속
 2. 회원가입 및 앱 등록
 3. 발급받은 키를 입력:
@@ -82,6 +83,7 @@ KIS_URL_BASE="https://openapi.koreainvestment.com:9443"  # 실전투자
 ```
 
 #### Google Gemini API
+
 1. [Google AI Studio](https://makersuite.google.com/app/apikey) 접속
 2. API 키 발급
 3. `.env` 파일에 추가:
@@ -91,6 +93,7 @@ GEMINI_API_KEY="your_gemini_api_key_here"
 ```
 
 #### Slack Webhook (선택사항)
+
 1. [Slack Incoming Webhooks](https://api.slack.com/messaging/webhooks) 설정
 2. Webhook URL 복사:
 
@@ -126,6 +129,7 @@ python3 main.py
 ```
 
 봇이 실행되면 다음 작업들을 자동으로 수행합니다:
+
 - 매일 설정된 시간에 분석 및 매매 수행
 - 휴장일 자동 감지 및 스킵
 - 모든 이벤트를 Slack으로 알림
@@ -139,7 +143,7 @@ python3 run_daily_advice.py
 
 - KOSDAQ 150 종목 중 RSI < 35인 종목을 필터링
 - 각 종목의 최근 24시간 뉴스를 검색하여 Gemini AI에 분석 요청
-- 분석 결과를 `advice_history.db`에 저장
+- 분석 결과를 `stock_analysis.db`에 저장
 
 ### 3. 대시보드 실행
 
@@ -148,6 +152,7 @@ streamlit run dashboard.py
 ```
 
 브라우저에서 `http://localhost:8501`로 접속하여:
+
 - 날짜별 Gemini 분석 결과 확인
 - YES/NO 추천 통계 확인
 - 종목별 상세 분석 내용 확인
@@ -189,13 +194,14 @@ RSI_POWER_ZONE/
 ├── .env.example              # 환경 변수 예시
 ├── exclude_list.txt          # 제외 종목 리스트
 ├── trade_history.json        # 거래 이력 (자동 생성)
-├── advice_history.db         # Gemini 분석 DB (자동 생성)
+├── stock_analysis.db         # Gemini 분석 DB (자동 생성)
 └── trade_log.txt             # 실행 로그 (자동 생성)
 ```
 
 ## 매매 전략 상세
 
 ### 매수 조건
+
 1. RSI(3) < 35 (과매도 구간)
 2. 현재가 > SMA(100) (상승 추세)
 3. 제외 종목 리스트에 없음
@@ -204,10 +210,12 @@ RSI_POWER_ZONE/
 6. 현재 보유 종목 < 5개
 
 ### 매도 조건
+
 1. RSI(3) > 70 (과매수 구간), 또는
 2. 보유 기간 > 38일 (강제 청산)
 
 ### 리스크 관리
+
 - **최대 보유 종목**: 5개로 분산 투자
 - **포지션 사이즈**: 종목당 고정 금액 (기본 100만원)
 - **손실 쿨다운**: 손실 종목은 40일간 재매수 금지
@@ -224,6 +232,7 @@ KIS_URL_BASE="https://openapivts.koreainvestment.com:29443"
 ```
 
 모의투자 모드에서는:
+
 - 가상 계좌로 안전하게 테스트
 - 자동으로 감지되어 Slack 알림 비활성화
 - 모든 휴장일을 거래일로 간주 (테스트 용이)
@@ -239,18 +248,23 @@ KIS_URL_BASE="https://openapi.koreainvestment.com:9443"
 ## 자주 묻는 질문 (FAQ)
 
 ### Q: 봇을 24시간 돌려야 하나요?
+
 A: 예. 봇은 내부 스케줄러로 정해진 시간에만 작업을 수행하고, 나머지 시간은 대기합니다. 서버나 항상 켜져있는 PC에서 실행하는 것을 권장합니다.
 
 ### Q: 크론잡으로 특정 시간에만 실행할 수 있나요?
+
 A: 가능하지만 권장하지 않습니다. 09:05-15:20 동안 1분마다 미체결 주문을 모니터링해야 하므로, 연속 실행이 적합합니다.
 
 ### Q: Gemini API 비용은 얼마나 드나요?
+
 A: Gemini Flash 모델은 무료 티어에서도 충분히 사용 가능합니다. 하루 150개 종목을 분석해도 무료 한도 내에서 동작합니다.
 
 ### Q: 손실이 발생하면 어떻게 되나요?
+
 A: 해당 종목은 40일간 자동으로 재매수가 차단되며, `trade_history.json`에 기록됩니다.
 
 ### Q: 특정 종목을 영구적으로 제외하고 싶어요
+
 A: `exclude_list.txt` 파일에 종목 코드를 추가하면 매수/매도 대상에서 제외됩니다.
 
 ## 테스트
@@ -289,12 +303,14 @@ grep "$(date +%Y-%m-%d)" trade_log.txt
 ## 주의사항
 
 ⚠️ **투자 위험 경고**
+
 - 이 봇은 교육 및 연구 목적으로 제작되었습니다
 - 실전 투자 시 발생하는 손실에 대해 개발자는 책임지지 않습니다
 - 반드시 모의투자로 충분히 테스트한 후 소액으로 시작하세요
 - 투자 손실 위험을 충분히 이해하고 사용하세요
 
 ⚠️ **기술적 주의사항**
+
 - KIS API는 초당 요청 횟수(TPS) 제한이 있습니다
 - 모의투자 서버는 불안정할 수 있습니다 (500 에러 빈번)
 - 네트워크 장애 시 거래가 실패할 수 있습니다
