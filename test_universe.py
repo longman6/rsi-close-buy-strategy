@@ -1,17 +1,13 @@
 from pykrx import stock
+import datetime
 
-from pykrx import stock
- 
-for index_v in stock.get_index_ticker_list(market='KOSDAQ'):
- 
-    print(index_v, stock.get_index_ticker_name(index_v))
+# 오늘 날짜를 YYYYMMDD 형식으로 가져오기
+today = datetime.datetime.now().strftime("%Y%m%d")
 
-# # 코스닥150 지수 구성종목 목록 가져오기 (2025년 12월 정기변경 기준)
-# kosdaq150_list = stock.get_index_constituent_list("KOSDAQ150", "20251212") # 2025년 12월 12일 기준
+# 가장 가까운 영업일 가져오기
+nearest_business_day = stock.get_nearest_business_day_in_a_week()
 
-# print(kosdaq150_list)
-
-  
-tickers = stock.get_index_portfolio_deposit_file("2203") # KOSDAQ 150
-
-print(tickers)
+if today == nearest_business_day:
+    print(f"오늘은 개장일입니다. ({today})")
+else:
+    print(f"오늘은 휴장일입니다. 가장 가까운 영업일: {nearest_business_day}")

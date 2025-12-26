@@ -65,6 +65,25 @@ def get_kosdaq150_universe():
         ]
 
 def analyze_kosdaq150():
+    # Market Day Check
+    try:
+        from pykrx import stock
+        today_check = datetime.now().strftime("%Y%m%d")
+        nearest_business_day = stock.get_nearest_business_day_in_a_week()
+        
+        if today_check == nearest_business_day:
+            logging.info(f"Market Open Check: Today ({today_check}) is a trading day.")
+            print(f"오늘은 개장일입니다. ({today_check})")
+        else:
+            logging.info(f"Market Closed Check: Today ({today_check}) is a holiday. Nearest: {nearest_business_day}")
+            print(f"오늘은 휴장일입니다. 가장 가까운 영업일: {nearest_business_day}")
+            return # Exit function
+    except Exception as e:
+        logging.error(f"Market Day Check Failed: {e}")
+        # Proceed if check fails? Or exit? Usually safe to proceed or maybe fallback. 
+        # But user wants to stop on holiday. If error, let's log and proceed or return?
+        # Let's assume proceed on error to be safe, but logged.
+
     logging.info("🚀 Starting Daily KOSDAQ 150 Analysis (Multi-LLM)...")
     
     # Initialize
@@ -134,8 +153,9 @@ def analyze_kosdaq150():
                          specific_model = advice.get('specific_model')
                          rec = advice.get('recommendation')
                          reasoning = advice.get('reasoning')
+                         prompt = advice.get('prompt')
                          
-                         db.save_ai_advice(today_str, code, model, rec, reasoning, specific_model)
+                         db.save_ai_advice(today_str, code, model, rec, reasoning, specific_model, prompt)
                          logging.info(f"   > {model} ({specific_model}): {rec}")
 
             # Save to DB (Main Record - Pure RSI)

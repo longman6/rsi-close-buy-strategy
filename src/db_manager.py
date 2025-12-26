@@ -52,6 +52,7 @@ class DBManager:
                         recommendation TEXT,-- 'YES', 'NO'
                         reasoning TEXT,     -- Specific reasoning
                         specific_model TEXT, -- Specific Model ID (e.g. gemini-1.5-flash)
+                        prompt TEXT,        -- The prompt used for analysis
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -62,6 +63,10 @@ class DBManager:
                 if 'specific_model' not in columns:
                     logging.info("Migrating DB: Adding specific_model column to ai_advice")
                     cursor.execute("ALTER TABLE ai_advice ADD COLUMN specific_model TEXT")
+
+                if 'prompt' not in columns:
+                    logging.info("Migrating DB: Adding prompt column to ai_advice")
+                    cursor.execute("ALTER TABLE ai_advice ADD COLUMN prompt TEXT")
                 
                 conn.commit()
         except Exception as e:
@@ -132,15 +137,15 @@ class DBManager:
             logging.error(f"[DB] Fetch RSI Error: {e}")
         return results
 
-    def save_ai_advice(self, date: str, code: str, model: str, recommendation: str, reasoning: str, specific_model: str = None):
+    def save_ai_advice(self, date: str, code: str, model: str, recommendation: str, reasoning: str, specific_model: str = None, prompt: str = None):
         """Save advice from a specific AI model."""
         try:
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO ai_advice (date, code, model, recommendation, reasoning, specific_model)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (date, code, model, recommendation, reasoning, specific_model))
+                    INSERT INTO ai_advice (date, code, model, recommendation, reasoning, specific_model, prompt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (date, code, model, recommendation, reasoning, specific_model, prompt))
                 conn.commit()
         except Exception as e:
             logging.error(f"[DB] Save AI Advice Error: {e}")

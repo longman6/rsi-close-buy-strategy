@@ -6,6 +6,7 @@ from typing import List, Dict
 # Import Clients
 # Import Clients
 from src.ai_clients import GeminiClient, ClaudeClient, OpenAIClient, GrokClient
+from src.news_search import NewsSearch
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,6 +18,7 @@ class AIManager:
         self.clients = []
         self.config = self._load_config()
         self._initialize_clients()
+        self.news_search = NewsSearch()
 
     def _load_config(self) -> Dict:
         try:
@@ -87,12 +89,16 @@ class AIManager:
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
+        # 1. Fetch News (RAG)
+        logging.info(f"🔎 Fetching news for {name} ({code})...")
+        news_text = self.news_search.get_news(name)
+
         def call_client(client_config):
             c_name = client_config['name']
             c_obj = client_config['client']
             try:
                 logging.info(f"🤖 Asking {c_name} about {name}...")
-                advice = c_obj.get_advice(name, code, rsi, ohlcv_text)
+                advice = c_obj.get_advice(name, code, rsi, ohlcv_text, news_context=news_text)
                 
                 rec = advice.get("recommendation", "ERROR")
                 reason = advice.get("reasoning", "No valid response")
@@ -101,7 +107,8 @@ class AIManager:
                     "model": c_name,
                     "specific_model": client_config.get('model'),
                     "recommendation": rec,
-                    "reasoning": reason
+                    "reasoning": reason,
+                    "prompt": advice.get("prompt")
                 }
             except Exception as e:
                 logging.error(f"Error from {c_name}: {e}")

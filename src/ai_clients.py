@@ -19,7 +19,7 @@ except ImportError:
     genai = None
 
 
-def _get_common_prompt(stock_name: str, code: str, rsi: float, ohlcv_text: str) -> str:
+def _get_common_prompt(stock_name: str, code: str, rsi: float, ohlcv_text: str, news_context: str = "") -> str:
     return f"""
     Analyze the KOSDAQ stock "{stock_name}" ({code}) for a potential Short-term Rebound Trade (1-10 days).
 
@@ -28,15 +28,20 @@ def _get_common_prompt(stock_name: str, code: str, rsi: float, ohlcv_text: str) 
     - Recent Price History (Last 30 Days):
     {ohlcv_text}
 
-    [Web Search Context]
-    Search for the latest news, analyst reports, and social media (SNS) sentiment for "{stock_name}" ({code}).
-    CRITICAL REQUIREMENT: Only consider information published within the LAST 24 HOURS.
-    
+    [News Context (Real-time RAG)]
+    The following news headlines and snippets were retrieved from the last 24 hours:
+    ---
+    {news_context if news_context else "No recent news found."}
+    ---
+
     [Task]
     1. **Technical Analysis**: Briefly analyze the price trend and volume from the provided OHLCV data. Is there signs of stopping the fall?
-    2. **News/Sentiment**: Analyze if there are any ultra-recent positive catalysts or bottoming signals from the last 24 hours. Check for breaking news.
+    2. **News/Sentiment**: Analyze the provided 'News Context' above.
+       - If "No recent news found", assume NO specific bad news (Neutral/Positive for rebound).
+       - If there is bad news (e.g. Delisting risk, Embezzlement, huge earnings miss), it is a STRONG SELL signal (NO).
+       - If there is good news or just general neutral news, it supports a rebound.
     3. **Decision**: Provide a definitive 'YES' or 'NO' recommendation for buying right now.
-       - YES: If technicals show potential rebound AND no fatal bad news.
+       - YES: If technicals show potential rebound AND no fatal bad news in the provided context.
        - NO: If trend is broken without support OR there is bad news explaining the drop.
     4. **Reasoning**: Summarize the reasoning based on both Technicals and News.
     
@@ -55,11 +60,11 @@ class ClaudeClient:
         self.model = model
         self.enabled = bool(self.client) and bool(api_key)
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
         if not self.enabled:
             return {"recommendation": "SKIP (Config)", "reasoning": "Claude Disabled/No Key"}
         
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
         
         try:
             message = self.client.messages.create(
@@ -84,11 +89,11 @@ class ClaudeClient:
                 except:
                     pass
             
-            return {"recommendation": rec, "reasoning": reason}
+            return {"recommendation": rec, "reasoning": reason, "prompt": prompt}
 
         except Exception as e:
             logging.error(f"Claude Error: {e}")
-            return {"recommendation": "ERROR", "reasoning": str(e)}
+            return {"recommendation": "ERROR", "reasoning": str(e), "prompt": prompt}
 
 class OpenAIClient:
     def __init__(self, api_key: str, model: str):
@@ -96,11 +101,11 @@ class OpenAIClient:
         self.model = model
         self.enabled = bool(self.client) and bool(api_key)
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
         if not self.enabled:
              return {"recommendation": "SKIP (Config)", "reasoning": "OpenAI Disabled/No Key"}
 
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
         
         try:
             response = self.client.chat.completions.create(
@@ -110,10 +115,11 @@ class OpenAIClient:
             )
             content = response.choices[0].message.content
             data = json.loads(content)
+            data["prompt"] = prompt
             return data
         except Exception as e:
             logging.error(f"OpenAI Error: {e}")
-            return {"recommendation": "ERROR", "reasoning": str(e)}
+            return {"recommendation": "ERROR", "reasoning": str(e), "prompt": prompt}
 
 class GrokClient:
     def __init__(self, api_key: str, model: str):
@@ -122,11 +128,11 @@ class GrokClient:
         self.model = model 
         self.enabled = bool(self.client) and bool(api_key)
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
         if not self.enabled:
              return {"recommendation": "SKIP (Config)", "reasoning": "Grok Disabled/No Key"}
 
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
         
         try:
             response = self.client.chat.completions.create(
@@ -142,12 +148,13 @@ class GrokClient:
             match = re.search(r'\{.*\}', content, re.DOTALL)
             if match:
                 data = json.loads(match.group(0))
+                data["prompt"] = prompt
                 return data
             else:
-                 return {"recommendation": "N/A", "reasoning": content}
+                 return {"recommendation": "N/A", "reasoning": content, "prompt": prompt}
         except Exception as e:
             logging.error(f"Grok Error: {e}")
-            return {"recommendation": "ERROR", "reasoning": str(e)}
+            return {"recommendation": "ERROR", "reasoning": str(e), "prompt": prompt}
 
 class GeminiClient:
     def __init__(self, api_key: str, model: str):
@@ -163,11 +170,11 @@ class GeminiClient:
                 logging.error(f"[Gemini] Init Error: {e}")
                 self.enabled = False
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
         if not self.enabled:
              return {"recommendation": "SKIP (Config)", "reasoning": "Gemini Disabled/No Key"}
 
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
         
         # Retry Config
         max_retries = 3
@@ -183,6 +190,7 @@ class GeminiClient:
                     )
                 )
                 result = json.loads(response.text)
+                result["prompt"] = prompt
                 return result
             except Exception as e:
                 error_str = str(e)
@@ -195,7 +203,8 @@ class GeminiClient:
                     logging.error(f"[Gemini] API Error: {e}")
                     return {
                         "recommendation": "NO", 
-                        "reasoning": f"Gemini Analysis Failed: {str(e)}"
+                        "reasoning": f"Gemini Analysis Failed: {str(e)}",
+                        "prompt": prompt
                     }
         
-        return {"recommendation": "NO", "reasoning": "Gemini Rate Limit Exceeded after retries."}
+        return {"recommendation": "NO", "reasoning": "Gemini Rate Limit Exceeded after retries.", "prompt": prompt}
