@@ -19,161 +19,55 @@ RSI POWER ZONE은 RSI(3) 지표 기반의 단기 반등 전략을 자동으로 �
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     Daily Schedule                       │
+│                     Daily Schedule (KST)                │
 ├─────────────────────────────────────────────────────────┤
-│ 07:00  Gemini AI 분석 (저 RSI 종목 뉴스 분석)            │
-│ 08:30  매수 후보 선정 (RSI < 35, Close > SMA100)         │
+│ 08:00  Cron Job: analyze_kosdaq150.py 실행               │
+│        - KOSDAQ 150 전 종목 RSI 계산                     │
+│        - RSI < 35 종목 대상 4개 LLM (Gemini, Claude 등) 분석 │
+│        - 분석 결과 및 매수 추천 DB 저장                  │
+├─────────────────────────────────────────────────────────┤
+│ 08:30  Main Bot: 매수 후보 선정                          │
+│        - DB에서 Low RSI & 4-LLM Consensus('YES') 조회    │
+├─────────────────────────────────────────────────────────┤
 │ 08:57  Pre-Market 지정가 주문 (예상체결가 + 5 Tick)       │
-│ 09:05  미체결 주문 모니터링 (현재가로 정정, +5% 초과 시 취소) │
+├─────────────────────────────────────────────────────────┤
+│ 09:05  미체결 주문 모니터링 (현재가로 정정)               │
+├─────────────────────────────────────────────────────────┤
 │ 15:20  매도 신호 체크 (RSI > 70 or 보유 38일 초과)        │
+├─────────────────────────────────────────────────────────┤
 │ 15:26  시장가 매도 실행                                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 설치 방법
+## 🗄️ Database Schema (`stock_analysis.db`)
 
-### 1. 저장소 클론
+SQLite를 사용하여 분석 데이터와 AI 추천 결과를 저장합니다.
 
-```bash
-git clone <repository-url>
-cd RSI_POWER_ZONE
-```
+### 1. `daily_rsi` (일일 RSI 분석 결과)
 
-### 2. 가상환경 생성 및 활성화
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | PK |
+| date | TEXT | 분석 날짜 (YYYY-MM-DD) |
+| code | TEXT | 종목 코드 |
+| name | TEXT | 종목명 |
+| rsi | REAL | RSI(3) 값 |
+| close_price | REAL | 종가 |
+| created_at | TIMESTAMP | 생성 시간 |
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# .venv\Scripts\activate  # Windows
-```
+### 2. `ai_advice` (AI 매수 추천)
 
-### 3. 의존성 패키지 설치
-
-```bash
-pip install -r requirements.txt
-```
-
-## 환경 설정
-
-### 1. 환경 변수 파일 생성
-
-`.env.example` 파일을 복사하여 `.env` 파일을 생성합니다:
-
-```bash
-cp .env.example .env
-```
-
-### 2. API 키 설정
-
-`.env` 파일을 열어 다음 항목들을 설정합니다:
-
-#### 한국투자증권 API
-
-1. [한국투자증권 OpenAPI](https://apiportal.koreainvestment.com/) 접속
-2. 회원가입 및 앱 등록
-3. 발급받은 키를 입력:
-
-```env
-KIS_APP_KEY="your_app_key_here"
-KIS_APP_SECRET="your_app_secret_here"
-KIS_CANO="12345678"  # 계좌번호 앞 8자리
-KIS_ACNT_PRDT_CD="01"
-KIS_URL_BASE="https://openapi.koreainvestment.com:9443"  # 실전투자
-# KIS_URL_BASE="https://openapivts.koreainvestment.com:29443"  # 모의투자
-```
-
-#### Google Gemini API
-
-1. [Google AI Studio](https://makersuite.google.com/app/apikey) 접속
-2. API 키 발급
-3. `.env` 파일에 추가:
-
-```env
-GEMINI_API_KEY="your_gemini_api_key_here"
-```
-
-#### Slack Webhook (선택사항)
-
-1. [Slack Incoming Webhooks](https://api.slack.com/messaging/webhooks) 설정
-2. Webhook URL 복사:
-
-```env
-SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
-SLACK_CHANNEL="#trading"
-```
-
-### 3. 전략 파라미터 조정 (선택사항)
-
-```env
-RSI_WINDOW=3              # RSI 계산 기간
-SMA_WINDOW=100            # SMA 계산 기간
-MAX_POSITIONS=5           # 최대 보유 종목 수
-RSI_BUY_THRESHOLD=35      # 매수 RSI 임계값
-RSI_SELL_THRESHOLD=70     # 매도 RSI 임계값
-BUY_AMOUNT_KRW=1000000    # 종목당 매수 금액 (100만원)
-MAX_HOLDING_DAYS=38       # 최대 보유 기간
-LOSS_COOLDOWN_DAYS=40     # 손실 후 재매수 금지 기간
-```
-
-## 사용 방법
-
-### 1. 메인 트레이딩 봇 실행
-
-```bash
-# 쉘 스크립트 사용
-./run.sh
-
-# 또는 직접 실행
-source .venv/bin/activate
-python3 main.py
-```
-
-봇이 실행되면 다음 작업들을 자동으로 수행합니다:
-
-- 매일 설정된 시간에 분석 및 매매 수행
-- 휴장일 자동 감지 및 스킵
-- 모든 이벤트를 Slack으로 알림
-- 실행 로그를 `trade_log.txt`에 기록
-
-### 2. Gemini AI 분석만 실행
-
-```bash
-python3 run_daily_advice.py
-```
-
-- KOSDAQ 150 종목 중 RSI < 35인 종목을 필터링
-- 각 종목의 최근 24시간 뉴스를 검색하여 Gemini AI에 분석 요청
-- 분석 결과를 `stock_analysis.db`에 저장
-
-### 3. 대시보드 실행
-
-```bash
-streamlit run dashboard.py
-```
-
-브라우저에서 `http://localhost:8501`로 접속하여:
-
-- 날짜별 Gemini 분석 결과 확인
-- YES/NO 추천 통계 확인
-- 종목별 상세 분석 내용 확인
-
-### 4. 백테스트 실행
-
-```bash
-python3 rsi_strategy_backtest.py
-```
-
-과거 데이터를 기반으로 전략의 성과를 시뮬레이션합니다.
-
-## 제외 종목 관리
-
-특정 종목을 매매에서 제외하려면 `exclude_list.txt` 파일을 편집합니다:
-
-```txt
-# 제외할 종목 코드를 한 줄에 하나씩 입력
-005930  # 삼성전자
-000660  # SK하이닉스
-```
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | PK |
+| date | TEXT | 분석 날짜 (YYYY-MM-DD) |
+| code | TEXT | 종목 코드 |
+| model | TEXT | AI 모델명 (Gemini, Claude, GPT, Grok) |
+| recommendation | TEXT | 추천 결과 ('YES' or 'NO') |
+| reasoning | TEXT | 추천 사유 |
+| specific_model | TEXT | 상세 모델 버전 (e.g., gemini-1.5-flash) |
+| prompt | TEXT | 사용된 프롬프트 내용 |
+| created_at | TIMESTAMP | 생성 시간 |
 
 ## 📂 Project Structure
 
@@ -181,13 +75,15 @@ python3 rsi_strategy_backtest.py
 RSI_POWER_ZONE/
 ├── main.py                 # 🚀 Main Bot Entry Point
 ├── dashboard.py            # 📊 Streamlit Dashboard
-├── analyze_kosdaq150.py    # 🧠 Daily AI Analysis (Cron)
+├── analyze_kosdaq150.py    # 🧠 Daily AI Analysis (Cron Job @ 08:00 KST)
 ├── config.py               # ⚙️ Configuration
 ├── run.sh                  # 🏃 Execution Script
+├── run_analysis.sh         # 🕒 Cron Execution Script
+├── run_dashboard.sh        # 📊 Dashboard Launch Script
 ├── src/                    # 🧱 Core Modules
 │   ├── kis_client.py       # KIS API Client
 │   ├── db_manager.py       # Database Manager
-│   ├── ai_manager.py       # AI Aggregation Manager
+│   ├── ai_manager.py       # AI Aggregation Manager (Multi-LLM)
 │   ├── strategy.py         # Technical Indicators
 │   ├── trade_manager.py    # Trade Execution Logic
 │   └── utils.py            # Common Utilities (KST Time, etc)
@@ -196,8 +92,8 @@ RSI_POWER_ZONE/
 │   └── ...
 ├── tests/                  # 🧪 Tests & Debugging
 │   ├── debug/              # Debugging Scripts
-│   ├── unit/               # Unit Tests
-│   └── integration/        # Integration/Validation Tests
+│   ├── unit/               # Unit Tests (test_bot.py, etc)
+│   └── integration/        # Integration Tests (verify_*.py)
 └── stock_analysis.db       # 🗄️ SQLite Database
 ```
 
@@ -208,6 +104,65 @@ RSI_POWER_ZONE/
 └── trade_log.txt             # 실행 로그 (자동 생성)
 
 ```
+
+## 사용 방법
+
+### 1. 메인 트레이딩 봇 실행
+
+```bash
+# 쉘 스크립트 사용 (권장)
+./run.sh
+
+# 또는 직접 실행
+source .venv/bin/activate
+python3 main.py
+```
+
+봇이 실행되면 다음 작업들을 자동으로 수행합니다:
+- 매일 설정된 시간에 분석 및 매매 수행
+- 휴장일 자동 감지 및 스킵
+- 모든 이벤트를 Slack으로 알림
+- 실행 로그를 `trade_log.txt`에 기록
+
+### 2. Daily AI 분석 실행 (수동)
+
+일일 분석은 매일 아침 08:00 (KST)에 Cron에 의해 자동 실행되지만, 필요시 수동으로 실행할 수도 있습니다.
+
+```bash
+# 쉘 스크립트 사용 (권장)
+./run_analysis.sh
+
+# 또는 Python 직접 실행
+python3 analyze_kosdaq150.py
+```
+
+- KOSDAQ 150 종목 중 RSI < 35인 종목을 필터링
+- 각 종목의 저항선/지지선 및 기술적 지표 계산
+- 4개의 LLM(Gemini, Claude, GPT, Grok)에 매수 적합성 분석 요청
+- 분석 결과를 `stock_analysis.db`에 저장
+
+### 3. 대시보드 실행
+
+```bash
+# 쉘 스크립트 사용 (권장)
+./run_dashboard.sh
+
+# 또는 Streamlit 직접 실행
+streamlit run dashboard.py
+```
+
+브라우저에서 `http://localhost:8501`로 접속하여:
+- 날짜별 AI 분석 결과 및 Consensus 확인
+- 보유 종목 현황 및 수익률 실시간 모니터링
+- 전체 KOSDAQ 150 종목 RSI 스크리닝 결과 조회
+
+### 4. 백테스트 실행
+
+```bash
+python3 rsi_strategy_backtest.py
+```
+
+과거 데이터를 기반으로 전략의 성과를 시뮬레이션합니다.
 
 ## 매매 전략 상세
 
