@@ -39,7 +39,6 @@ state = {
     "sell_check_done": False,
     "sell_exec_done": False,
     "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
-    "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
     "last_reset_date": None,
     "is_holiday": False,
     "exclude_list": set(),
@@ -248,7 +247,7 @@ def main():
             time.sleep(5)
 
 def run_morning_analysis(kis, slack, strategy, trade_manager):
-    """08:30: Calculate RSI, Select Candidates"""
+    """08:30: Calculate RSI, Select Candidates using DB Consensus"""
     logging.info("🔍 [08:30] Starting Morning Analysis...")
     slack.send_message("🔍 [08:30] Morning Analysis Started")
 
@@ -266,74 +265,79 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
         slack.send_message("ℹ️ Portfolio Full. No new buys.")
         return
 
-    universe = strategy.get_universe()
+    # NEW LOGIC: Query DB
+    db = DBManager()
+    today_str = get_now_kst().strftime("%Y-%m-%d")
+    
+    # 1. Get Low RSI Candidates
+    rsi_threshold = config.RSI_BUY_THRESHOLD 
+    
+    low_rsi_candidates = db.get_low_rsi_candidates(today_str, threshold=rsi_threshold)
+    logging.info(f"Found {len(low_rsi_candidates)} candidates with RSI < {rsi_threshold}")
+    
+    if not low_rsi_candidates:
+        msg = f"ℹ️ No stocks with RSI < {rsi_threshold} found for {today_str}."
+        logging.info(msg)
+        slack.send_message(msg)
+        # We stop here because intersection will be empty anyway
+        return
+
+    # 2. Get Consensus Candidates
+    consensus_codes = db.get_consensus_candidates(today_str, min_votes=4)
+    logging.info(f"Found {len(consensus_codes)} candidates with 4-LLM Consensus")
+    
+    if not consensus_codes:
+        msg = "ℹ️ No stocks with 4-LLM Consensus found."
+        logging.info(msg)
+        slack.send_message(msg)
+        return
+
     candidates = []
     
-    # Optimization: 250 days fetch
-    # Use KST for date strings too, though API handles string YYYYMMDD
-    now_kst = get_now_kst()
-    start_date = (now_kst - timedelta(days=250)).strftime("%Y%m%d")
-    today_str = now_kst.strftime("%Y-%m-%d")
-
-    # Fetch Gemini Advice for Today
-    db = DBManager()
-    advice_list = db.get_advice_by_date(today_str)
-    rejected_codes = {item['code'] for item in advice_list if item['recommendation'] == 'NO'}
-    if rejected_codes:
-        logging.info(f"🤖 Gemini Rejected {len(rejected_codes)} stocks: {rejected_codes}")
-
-    cnt = 0
-    for code in universe:
-        if code in state["exclude_list"]:
-            continue # Exclude explicitly
+    # Intersect and Filter
+    for item in low_rsi_candidates:
+        code = item['code']
+        name = item['name']
         
-        # Check Gemini Rejection
-        if code in rejected_codes:
-            # logging.info(f"🚫 Skipping {code} (Gemini Rejected)")
+        # Check Exclusion
+        if code in state["exclude_list"]:
             continue
-
+            
+        # Check Consensus
+        if code not in consensus_codes:
+            continue
+            
+        # Check Holdings
         if any(h['pdno'] == code for h in current_holdings): continue
         
         # Check Loss Cooldown
         if not trade_manager.can_buy(code):
             continue
-
-        # Check Dangerous Status (Suspended/Warning)
+            
+        # Check Dangerous Status (API Check)
         is_dangerous, reason = kis.check_dangerous_stock(code)
         if is_dangerous:
              logging.info(f"🚫 Skipping {code}: {reason}")
              continue
         
-        # Delay (Mock vs Real)
-        time.sleep(1.5 if kis.is_mock else 0.2)
-        
-        df = kis.get_daily_ohlcv(code, start_date=start_date)
-        if df.empty: continue
-        
-        df = strategy.calculate_indicators(df)
-        signal = strategy.analyze_stock(code, df)
-        
-        if signal:
-            signal['name'] = code # Placeholder
-            candidates.append(signal)
-            logging.info(f"Candidate: {code} RSI={signal['rsi']:.2f}")
-    
-    # Sort by RSI
+        # If passed all checks
+        candidates.append(item)
+        logging.info(f"Candidate: {name} ({code}) RSI={item['rsi']:.2f}")
+
+    # Sort by RSI (ascending)
     candidates.sort(key=lambda x: x['rsi'])
     final_buys = candidates[:slots_open]
     
     # Save to State
-    # Need to verify if 'close' in signal is 'yesterday close' (since ran at 08:30)
-    # Yes, get_daily_ohlcv returns up to yesterday if market not open.
     for item in final_buys:
         state["buy_targets"].append({
             "code": item['code'],
             "rsi": item['rsi'],
-            "close_yesterday": float(item['close']), # Ref Price
+            "close_yesterday": float(item['close_price']), # DB column name
             "target_qty": 0 # Calculated later
         })
     
-    msg = f"✅ Analysis Done. Selected {len(final_buys)} candidates."
+    msg = f"✅ Analysis Done. Selected {len(final_buys)} candidates (RSI<{rsi_threshold} + 4-LLM Consensus)."
     logging.info(msg)
     slack.send_message(msg)
 

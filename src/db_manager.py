@@ -191,3 +191,56 @@ class DBManager:
         except Exception as e:
             logging.error(f"[DB] Date Fetch Error: {e}")
         return sorted(list(dates), reverse=True)
+
+    def get_consensus_candidates(self, date: str, min_votes: int = 4) -> set:
+        """
+        Get set of stock codes that have at least `min_votes` 'YES' recommendations 
+        from DIFFERENT models for the given date.
+        """
+        candidates = set()
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                # Group by code and count distinct models that said YES
+                # assuming 'recommendation' is stored as 'YES'
+                cursor.execute("""
+                    SELECT code, COUNT(DISTINCT model) as vote_count
+                    FROM ai_advice
+                    WHERE date = ? AND recommendation = 'YES'
+                    GROUP BY code
+                    HAVING vote_count >= ?
+                """, (date, min_votes))
+                
+                rows = cursor.fetchall()
+                candidates = {row[0] for row in rows}
+                
+                if candidates:
+                    logging.info(f"[DB] Consensus ({min_votes}+ votes) found for: {candidates}")
+                    
+        except Exception as e:
+            logging.error(f"[DB] Consensus Fetch Error: {e}")
+        return candidates
+
+    def get_low_rsi_candidates(self, date: str, threshold: float = 30.0) -> List[Dict]:
+        """
+        Get list of stocks with RSI < threshold for the given date.
+        Returns list of dicts: {code, name, rsi, close_price}
+        """
+        results = []
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT code, name, rsi, close_price
+                    FROM daily_rsi
+                    WHERE date = ? AND rsi < ?
+                    ORDER BY rsi ASC
+                """, (date, threshold))
+                
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append(dict(row))
+        except Exception as e:
+            logging.error(f"[DB] Low RSI Fetch Error: {e}")
+        return results
