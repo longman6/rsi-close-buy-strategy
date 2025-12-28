@@ -38,12 +38,13 @@ set_korean_font()
 # ---------------------------------------------------------
 # 2. 전략 설정 (최적화 파라미터 적용)
 # ---------------------------------------------------------
-START_DATE = '2008-01-01'
+START_DATE = '2005-01-01'
 INITIAL_CAPITAL = 100000000
 MAX_POSITIONS = 5
 ALLOCATION_PER_STOCK = 0.20
-TX_FEE_RATE = 0.00015
-TAX_RATE = 0.0020
+TX_FEE_RATE = 0.00015   # 0.015% (매수/매도 각각)
+TAX_RATE = 0.0020       # 0.2% (매도 시)
+SLIPPAGE_RATE = 0.001   # 0.1% (매수/매도 각각 슬리피지 지연/체결오차)
 
 # [파라미터 설정] 이곳의 값을 변경하여 테스트 가능
 RSI_WINDOW = 3          # RSI 기간
@@ -167,11 +168,12 @@ def run_backtest():
             sell_price = stock_data[ticker].loc[date, 'Close']
 
             sell_amt = pos['shares'] * sell_price
-            cost = sell_amt * (TX_FEE_RATE + TAX_RATE)
+            # 수수료 + 세금 + 매도 슬리피지 적용
+            cost = sell_amt * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
             cash += (sell_amt - cost)
 
-            buy_cost = (pos['shares'] * pos['buy_price']) * TX_FEE_RATE
-            net_return = ((sell_amt - cost) - (pos['shares'] * pos['buy_price'] + buy_cost)) / (pos['shares'] * pos['buy_price'] + buy_cost) * 100
+            buy_total_cost = (pos['shares'] * pos['buy_price']) * (1 + TX_FEE_RATE + SLIPPAGE_RATE)
+            net_return = ((sell_amt - cost) - buy_total_cost) / buy_total_cost * 100
 
             trades.append({'Ticker': ticker, 'Return': net_return, 'Date': date})
 
@@ -194,13 +196,15 @@ def run_backtest():
                 for candidate in buy_candidates[:open_slots]:
                     target_amt = total_equity * ALLOCATION_PER_STOCK
                     invest_amt = min(target_amt, cash)
-                    max_buy_amt = invest_amt / (1 + TX_FEE_RATE)
+                    # 수수료 + 매수 슬리피지 고려
+                    max_buy_amt = invest_amt / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
 
                     if max_buy_amt < 10000: continue
                     shares = int(max_buy_amt / candidate['price'])
                     if shares > 0:
                         buy_val = shares * candidate['price']
-                        cash -= (buy_val + buy_val * TX_FEE_RATE)
+                        # 실제 현금 차감 (금액 + 수수료 + 슬리피지)
+                        cash -= (buy_val + buy_val * (TX_FEE_RATE + SLIPPAGE_RATE))
                         positions[candidate['ticker']] = {
                             'shares': shares, 'buy_price': candidate['price'],
                             'last_price': candidate['price']
@@ -218,49 +222,75 @@ def run_backtest():
     if not trades_df.empty:
         win_rate = len(trades_df[trades_df['Return'] > 0]) / len(trades_df) * 100
 
-    # 벤치마크 (KODEX 코스닥150)
-    try:
-        bm = yf.download('229200.KS', start=START_DATE, progress=False)['Close']
-        if isinstance(bm, pd.DataFrame): bm = bm.iloc[:, 0]
-        bm = bm.reindex(all_dates).ffill()
+    # 벤치마크 (KODEX 코스닥150 & KODEX 200)
+    def get_benchmark_equity(ticker, label):
+        try:
+            print(f"[{label}] 데이터 다운로드 중...")
+            # Use 'max' period if start_date is very old, or just use start_date
+            data = yf.download(ticker, start=START_DATE, progress=False)
+            
+            if data is None or data.empty:
+                print(f"[경고] {label} 데이터를 가져오지 못했습니다.")
+                return None, 0, 0
+                
+            # Handle MultiIndex or Single Level Index
+            if isinstance(data.columns, pd.MultiIndex):
+                # Selection for yfinance MultiIndex (Level 0: Price, Level 1: Ticker)
+                if 'Close' in data.columns.get_level_values(0):
+                    bm = data.xs('Close', axis=1, level=0)
+                    if ticker in bm.columns:
+                        bm = bm[ticker]
+                    else:
+                        bm = bm.iloc[:, 0]
+                else:
+                    bm = data.iloc[:, 0] # Fallback
+            else:
+                if 'Close' in data.columns:
+                    bm = data['Close']
+                else:
+                    bm = data.iloc[:, 0]
+            
+            bm = bm.reindex(all_dates).ffill()
+            first_valid = bm.first_valid_index()
+            if first_valid:
+                start_val = bm.loc[first_valid]
+                equity = (bm / start_val) * INITIAL_CAPITAL
+                equity = equity.fillna(INITIAL_CAPITAL)
+                ret = (equity.iloc[-1] / INITIAL_CAPITAL - 1) * 100
+                mdd = ((equity - equity.cummax()) / equity.cummax()).min() * 100
+                return equity, ret, mdd
+        except Exception as e:
+            print(f"[경고] {label} 처리 중 오류: {e}")
+        return None, 0, 0
 
-        first_valid = bm.first_valid_index()
-        if first_valid:
-            start_val = bm.loc[first_valid]
-            bm_equity = (bm / start_val) * INITIAL_CAPITAL
-            bm_equity = bm_equity.fillna(INITIAL_CAPITAL)
-
-            bm_ret = (bm_equity.iloc[-1] / INITIAL_CAPITAL - 1) * 100
-            bm_mdd = ((bm_equity - bm_equity.cummax()) / bm_equity.cummax()).min() * 100
-        else:
-            bm_equity = None
-            bm_ret = 0
-            bm_mdd = 0
-    except:
-        bm_equity = None
-        bm_ret = 0
-        bm_mdd = 0
+    bm_kq_equity, bm_kq_ret, bm_kq_mdd = get_benchmark_equity('229200.KS', 'KOSDAQ 150')
+    bm_ks_equity, bm_ks_ret, bm_ks_mdd = get_benchmark_equity('069500.KS', 'KOSPI 200')
 
     # 출력
     print("\n" + "="*60)
     print(f" [KOSDAQ 150 - 최종 최적화 전략]")
-    print(f" 설정: RSI({RSI_WINDOW}), SMA({SMA_WINDOW}), 매수 < {BUY_THRESHOLD}, 매도 > {SELL_THRESHOLD}")
+    print(f" 설정: RSI({RSI_WINDOW}), SMA({SMA_WINDOW}), 매수<{BUY_THRESHOLD}, 매도>{SELL_THRESHOLD}")
+    print(f" 비용: 수수료 {TX_FEE_RATE*100:.3f}%, 세금 {TAX_RATE*100:.2f}%, 슬리피지 {SLIPPAGE_RATE*100:.1f}%")
     print("-" * 60)
     print(f" 기간: {START_DATE} ~ 현재")
     print(f" 전략 수익률 : {final_ret:6.2f}%  (MDD: {mdd:6.2f}%)")
-    if bm_equity is not None:
-        print(f" KOSDAQ 150 : {bm_ret:6.2f}%  (MDD: {bm_mdd:6.2f}%)")
+    if bm_kq_equity is not None:
+        print(f" KOSDAQ 150 : {bm_kq_ret:6.2f}%  (MDD: {bm_kq_mdd:6.2f}%)")
+    if bm_ks_equity is not None:
+        print(f" KOSPI 200  : {bm_ks_ret:6.2f}%  (MDD: {bm_ks_mdd:6.2f}%)")
     print(f" 총 거래 횟수: {len(trades_df)}회")
     print(f" 승률       : {win_rate:6.2f}%")
     print("="*60)
 
     # 시각화
     plt.figure(figsize=(12, 7))
-    plt.plot(hist_df.index, hist_df['Equity'], label=f'RSI({RSI_WINDOW}) + SMA({SMA_WINDOW}) Strategy', color='red', linewidth=2)
-    if bm_equity is not None:
-        plt.plot(bm_equity.index, bm_equity, label='KOSDAQ 150 ETF', color='gray', linestyle='--', alpha=0.7)
+    plt.plot(hist_df.index, hist_df['Equity'], label=f'Strategy (RSI {RSI_WINDOW}, SMA {SMA_WINDOW})', color='red', linewidth=2)
+    if bm_kq_equity is not None:
+        plt.plot(bm_kq_equity.index, bm_kq_equity, label='KOSDAQ 150 (KODEX)', color='blue', linestyle='--', alpha=0.6)
+    if bm_ks_equity is not None:
+        plt.plot(bm_ks_equity.index, bm_ks_equity, label='KOSPI 200 (KODEX)', color='green', linestyle=':', alpha=0.6)
 
-    plt.title(f'Final Strategy: RSI({RSI_WINDOW}) Buy<{BUY_THRESHOLD} Sell>{SELL_THRESHOLD} (Above SMA {SMA_WINDOW})')
+    plt.title(f'Performance Comparison: Strategy vs Benchmarks')
     plt.ylabel('Equity (KRW)')
     plt.legend()
     plt.grid(True, alpha=0.3)
