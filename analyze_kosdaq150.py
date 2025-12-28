@@ -66,19 +66,20 @@ def get_kosdaq150_universe():
         ]
 
 def analyze_kosdaq150():
+    # Initialize KIS Client first
+    kis = KISClient()
+    
     # Market Day Check
     try:
-        from pykrx import stock
         # Use KST
         today_check = get_now_kst().strftime("%Y%m%d")
-        nearest_business_day = stock.get_nearest_business_day_in_a_week()
         
-        if today_check == nearest_business_day:
+        if kis.is_trading_day(today_check):
             logging.info(f"Market Open Check: Today ({today_check}) is a trading day.")
             print(f"오늘은 개장일입니다. ({today_check})")
         else:
-            logging.info(f"Market Closed Check: Today ({today_check}) is a holiday. Nearest: {nearest_business_day}")
-            print(f"오늘은 휴장일입니다. 가장 가까운 영업일: {nearest_business_day}")
+            logging.info(f"Market Closed Check: Today ({today_check}) is a holiday.")
+            print(f"오늘은 휴장일입니다. ({today_check})")
             return # Exit function
     except Exception as e:
         logging.error(f"Market Day Check Failed: {e}")
@@ -89,7 +90,7 @@ def analyze_kosdaq150():
     logging.info("🚀 Starting Daily KOSDAQ 150 Analysis (Multi-LLM)...")
     
     # Initialize
-    kis = KISClient()
+    # kis = KISClient() # Already initialized above
     strategy = Strategy()
     db = DBManager()
     ai_manager = AIManager() # New Manager
