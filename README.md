@@ -19,7 +19,7 @@ RSI POWER ZONE은 RSI(3) 지표 기반의 단기 반등 전략을 자동으로 �
 
 ## 시스템 아키텍처
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                     Daily Schedule (KST)                │
 ├─────────────────────────────────────────────────────────┤
@@ -48,7 +48,7 @@ SQLite를 사용하여 분석 데이터와 AI 추천 결과를 저장합니다.
 ### 1. `daily_rsi` (일일 RSI 분석 결과)
 
 | Column | Type | Description |
-|--------|------|-------------|
+| :--- | :--- | :--- |
 | id | INTEGER | PK |
 | date | TEXT | 분석 날짜 (YYYY-MM-DD) |
 | code | TEXT | 종목 코드 |
@@ -60,7 +60,7 @@ SQLite를 사용하여 분석 데이터와 AI 추천 결과를 저장합니다.
 ### 2. `ai_advice` (AI 매수 추천)
 
 | Column | Type | Description |
-|--------|------|-------------|
+| :--- | :--- | :--- |
 | id | INTEGER | PK |
 | date | TEXT | 분석 날짜 (YYYY-MM-DD) |
 | code | TEXT | 종목 코드 |
@@ -74,7 +74,7 @@ SQLite를 사용하여 분석 데이터와 AI 추천 결과를 저장합니다.
 ### 3. `trade_history` (매매 체결 이력)
 
 | Column | Type | Description |
-|--------|------|-------------|
+| :--- | :--- | :--- |
 | id | INTEGER | PK |
 | date | TEXT | 거래 날짜 (YYYY-MM-DD) |
 | code | TEXT | 종목 코드 |
@@ -89,7 +89,7 @@ SQLite를 사용하여 분석 데이터와 AI 추천 결과를 저장합니다.
 
 ## 📂 Project Structure
 
-```
+```text
 RSI_POWER_ZONE/
 ├── main.py                 # 🚀 Main Bot Entry Point
 ├── dashboard.py            # 📊 Streamlit Dashboard
@@ -115,12 +115,12 @@ RSI_POWER_ZONE/
 └── stock_analysis.db       # 🗄️ SQLite Database
 ```
 
+```text
 ├── requirements.txt           # Python 의존성
 ├── .env.example              # 환경 변수 예시
 ├── exclude_list.txt          # 제외 종목 리스트
 ├── trade_history.json        # 거래 이력 (자동 생성)
 └── trade_log.txt             # 실행 로그 (자동 생성)
-
 ```
 
 ## 사용 방법
