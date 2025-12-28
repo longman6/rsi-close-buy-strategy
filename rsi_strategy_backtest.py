@@ -1,4 +1,4 @@
-!pip install -q finance-datareader
+#!pip install -q finance-datareader
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -55,18 +55,20 @@ SMA_WINDOW = 100        # 이동평균선 기간 (100일선)
 # 3. 데이터 준비
 # ---------------------------------------------------------
 def get_kosdaq150_tickers():
+    """Fetch KOSDAQ 150 tickers using PyKRX (Index Code 2203)."""
     try:
-        import FinanceDataReader as fdr
-        print("KOSDAQ 150 종목 리스트 확보 중...")
-        df = fdr.StockListing('KOSDAQ')
-        col = 'Marcap' if 'Marcap' in df.columns else 'Amount'
-        if col in df.columns:
-            df = df.sort_values(by=col, ascending=False).head(150)
-        else:
-            df = df.head(150)
-        return [code + '.KQ' for code in df['Code'].tolist()]
-    except:
-        print("[주의] FinanceDataReader 없음. 샘플 종목 사용.")
+        from pykrx import stock
+        print("PyKRX를 통해 코스닥 150 종목 리스트 확보 중 (지수코드: 2203)...")
+        # 2203 is KOSDAQ 150 index code in PyKRX
+        tickers = stock.get_index_portfolio_deposit_file("2203") 
+        
+        if not tickers:
+            raise Exception("No tickers returned from PyKRX")
+            
+        # yfinance format: append .KQ
+        return [ticker + '.KQ' for ticker in tickers]
+    except Exception as e:
+        print(f"[주의] PyKRX 오류 ({e}). 샘플 종목 사용.")
         return ['247540.KQ', '091990.KQ', '066970.KQ', '028300.KQ', '293490.KQ']
 
 def calculate_rsi(data, window):
