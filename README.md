@@ -13,7 +13,8 @@ RSI POWER ZONE은 RSI(3) 지표 기반의 단기 반등 전략을 자동으로 �
 - ⏰ **완전 자동화**: 장 시작 전 분석부터 매매 실행, 모니터링까지 전 과정 자동화
 - 📱 **Slack 알림**: 모든 매매 이벤트를 Slack으로 실시간 알림
 - 🛡️ **리스크 관리**: 손실 종목 재매수 방지(40일 쿨다운), 최대 보유 기간 제한(38일)
-- 📈 **Streamlit 대시보드**: Gemini 분석 결과를 시각적으로 확인
+- 📈 **Streamlit 대시보드**: 실시간 포트폴리오 상태 및 과거 거래 이력 시각화
+- 🗄️ **영구 매매 기록**: 모든 BUY/SELL 내역을 SQLite DB에 저장하여 성과 분석 가능
 
 ## 시스템 아키텍처
 
@@ -67,6 +68,22 @@ SQLite를 사용하여 분석 데이터와 AI 추천 결과를 저장합니다.
 | reasoning | TEXT | 추천 사유 |
 | specific_model | TEXT | 상세 모델 버전 (e.g., gemini-1.5-flash) |
 | prompt | TEXT | 사용된 프롬프트 내용 |
+| created_at | TIMESTAMP | 생성 시간 |
+
+### 3. `trade_history` (매매 체결 이력)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | PK |
+| date | TEXT | 거래 날짜 (YYYY-MM-DD) |
+| code | TEXT | 종목 코드 |
+| name | TEXT | 종목명 |
+| action | TEXT | 매매 구분 ('BUY' or 'SELL') |
+| price | REAL | 체결 가격 |
+| quantity | INTEGER | 체결 수량 |
+| amount | REAL | 총 체결 금액 |
+| pnl_amt | REAL | 수익금 (SELL 시 기록) |
+| pnl_pct | REAL | 수익률 (SELL 시 기록) |
 | created_at | TIMESTAMP | 생성 시간 |
 
 ## 📂 Project Structure
@@ -154,6 +171,7 @@ streamlit run dashboard.py
 브라우저에서 `http://localhost:8501`로 접속하여:
 - 날짜별 AI 분석 결과 및 Consensus 확인
 - 보유 종목 현황 및 수익률 실시간 모니터링
+- 과거 거래 내역 시각화 (성과 지표, 수익 곡선 차트 등)
 - 전체 KOSDAQ 150 종목 RSI 스크리닝 결과 조회
 
 ### 4. 백테스트 실행
