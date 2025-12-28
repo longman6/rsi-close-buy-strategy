@@ -46,3 +46,5 @@ exclude_list.txt
 advice_history.db
 stock_analysis.db
 *.db
+backtest_result.png
+*.png

@@ -38,7 +38,7 @@ set_korean_font()
 # ---------------------------------------------------------
 # 2. 전략 설정 (최적화 파라미터 적용)
 # ---------------------------------------------------------
-START_DATE = '2025-01-01'
+START_DATE = '2008-01-01'
 INITIAL_CAPITAL = 100000000
 MAX_POSITIONS = 5
 ALLOCATION_PER_STOCK = 0.20
@@ -264,7 +264,12 @@ def run_backtest():
     plt.ylabel('Equity (KRW)')
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.show()
+    
+    # Save results as image
+    output_file = "backtest_result.png"
+    plt.savefig(output_file)
+    print(f"\n📈 백테스트 결과 차트가 저장되었습니다: {output_file}")
+    # plt.show()
 
 if __name__ == "__main__":
     run_backtest()
