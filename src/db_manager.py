@@ -44,6 +44,23 @@ class DBManager:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+
+                # Trade History Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS trade_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        date TEXT,          -- YYYY-MM-DD
+                        code TEXT,          -- Stock Code
+                        name TEXT,          -- Stock Name
+                        action TEXT,        -- 'BUY' or 'SELL'
+                        price REAL,         -- Execution Price
+                        quantity INTEGER,   -- Executed Quantity
+                        amount REAL,        -- Total Amount
+                        pnl_amt REAL,       -- Profit/Loss Amount (for SELL)
+                        pnl_pct REAL,       -- Profit/Loss Percentage (for SELL)
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 
                 # Migration: Add specific_model column if it doesn't exist
                 cursor.execute("PRAGMA table_info(ai_advice)")
@@ -108,6 +125,21 @@ class DBManager:
                 conn.commit()
         except Exception as e:
             logging.error(f"[DB] Save AI Advice Error: {e}")
+
+    def save_trade_record(self, date: str, code: str, name: str, action: str, price: float, quantity: int, pnl_amt: float = 0.0, pnl_pct: float = 0.0):
+        """Save a trade execution record (BUY/SELL)."""
+        try:
+            amount = float(price * quantity)
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO trade_history (date, code, name, action, price, quantity, amount, pnl_amt, pnl_pct)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (date, code, name, action, price, quantity, amount, pnl_amt, pnl_pct))
+                conn.commit()
+                logging.info(f"[DB] Saved {action} record for {name} ({code})")
+        except Exception as e:
+            logging.error(f"[DB] Save Trade Record Error: {e}")
 
     def get_ai_advice(self, date: str, code: str = None) -> List[Dict]:
         """Fetch AI advice for a date, optionally filtered by code."""
@@ -199,4 +231,22 @@ class DBManager:
                     results.append(dict(row))
         except Exception as e:
             logging.error(f"[DB] Low RSI Fetch Error: {e}")
+        return results
+
+    def get_trade_history(self) -> List[Dict]:
+        """Fetch all trade execution records sorted by date descending."""
+        results = []
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT * FROM trade_history 
+                    ORDER BY date DESC, id DESC
+                """)
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append(dict(row))
+        except Exception as e:
+            logging.error(f"[DB] Fetch Trade History Error: {e}")
         return results

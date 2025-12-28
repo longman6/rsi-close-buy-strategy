@@ -38,13 +38,16 @@ def main():
     page = st.sidebar.radio("Navigation", [
         "📊 Dashboard (KIS)", 
         "🧠 AI Advice", 
-        "📉 Full RSI List (KOSDAQ 150)"
+        "📉 Full RSI List (KOSDAQ 150)",
+        "📈 Trade History"
     ])
     
     if page == "📊 Dashboard (KIS)":
         render_dashboard()
     elif page == "🧠 AI Advice":
         render_ai_advice_page()
+    elif page == "📈 Trade History":
+        render_trade_history_page()
     else:
         render_full_rsi_page()
 
@@ -463,6 +466,86 @@ def render_full_rsi_page():
 
     if st.sidebar.button("Refresh Data"):
         st.rerun()
+
+def render_trade_history_page():
+    st.title("📈 Trade History")
+    st.markdown("Detailed log of all BUY/SELL executions stored in the database.")
+
+    db = DBManager()
+    history = db.get_trade_history()
+
+    if not history:
+        st.info("No trade records found in the database.")
+        return
+
+    df = pd.DataFrame(history)
+    
+    # 1. Summary Metrics
+    st.subheader("📊 Performance Summary")
+    
+    # Calculate realized P/L from SELL records
+    sell_df = df[df['action'] == 'SELL'].copy()
+    
+    total_trades = len(sell_df)
+    total_pnl_pct = sell_df['pnl_pct'].sum() if total_trades > 0 else 0.0
+    avg_pnl_pct = sell_df['pnl_pct'].mean() if total_trades > 0 else 0.0
+    win_rate = (len(sell_df[sell_df['pnl_pct'] > 0]) / total_trades * 100) if total_trades > 0 else 0.0
+    
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Closed Trades", f"{total_trades}")
+    c2.metric("Total P/L (%)", f"{total_pnl_pct:.2f}%")
+    c3.metric("Avg P/L (%)", f"{avg_pnl_pct:.2f}%")
+    c4.metric("Win Rate", f"{win_rate:.1f}%")
+    
+    st.divider()
+
+    # 2. Cumulative Profit Chart
+    st.subheader("📈 Cumulative Profit Over Time")
+    if total_trades > 0:
+        # Sort by date ascending for chart
+        chart_df = sell_df.sort_values('date')
+        chart_df['cumulative_pnl'] = chart_df['pnl_pct'].cumsum()
+        
+        # Streamlit line_chart expects index to be the x-axis
+        chart_df = chart_df.set_index('date')
+        st.line_chart(chart_df['cumulative_pnl'])
+    else:
+        st.info("Not enough sell data for a performance chart.")
+
+    st.divider()
+
+    # 3. Detailed Trade Log
+    st.subheader("📜 Execution Log")
+    
+    # Format for display
+    df_display = df.copy()
+    
+    # Naver Link for Name
+    df_display['Name'] = df_display.apply(
+        lambda row: f"<a href='https://finance.naver.com/item/main.naver?code={row['code']}' target='_blank'>{row['name']}</a>", 
+        axis=1
+    )
+    
+    # Format Price and Amount
+    df_display['Price'] = df_display['price'].map(lambda x: f"{int(x):,}")
+    df_display['Amount'] = df_display['amount'].map(lambda x: f"{int(x):,}")
+    
+    # Action Badge
+    df_display['Action'] = df_display['action'].apply(
+        lambda x: f"<span style='font-weight:bold; color:{'blue' if x == 'BUY' else 'red'}'>{x}</span>"
+    )
+    
+    # P/L for display
+    df_display['P/L (%)'] = df_display.apply(
+        lambda row: f"<span style='color:{'red' if row['pnl_pct'] > 0 else 'blue'}'>{row['pnl_pct']:.2f}%</span>" if row['action'] == 'SELL' else "",
+        axis=1
+    )
+    
+    # Select and order columns
+    df_display = df_display[['date', 'Action', 'Name', 'code', 'Price', 'quantity', 'Amount', 'P/L (%)']]
+    df_display.columns = ['Date', 'Action', 'Name', 'Code', 'Price', 'Qty', 'Amount', 'P/L (%)']
+    
+    st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()

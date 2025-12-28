@@ -8,8 +8,9 @@ import config
 HISTORY_FILE = "trade_history.json"
 
 class TradeManager:
-    def __init__(self):
+    def __init__(self, db=None):
         self.history = self._load_history()
+        self.db = db
 
     def _load_history(self):
         if not os.path.exists(HISTORY_FILE):
@@ -28,14 +29,20 @@ class TradeManager:
         except Exception as e:
             logging.error(f"[TradeManager] Failed to save history: {e}")
 
-    def update_buy(self, code, date_str):
+    def update_buy(self, code, name, date_str, price, qty):
         """Called upon successful buy."""
         # Clean date string just in case
         date_str = date_str.replace("-", "")
         self.history["holdings"][code] = {"buy_date": date_str}
         self._save_history()
+        
+        # Save to DB if available
+        if self.db:
+            # Convert YYYYMMDD back to YYYY-MM-DD for DB consistency if needed
+            db_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+            self.db.save_trade_record(db_date, code, name, "BUY", float(price), int(qty))
 
-    def update_sell(self, code, date_str, pnl_pct):
+    def update_sell(self, code, name, date_str, price, qty, pnl_pct):
         """Called upon successful sell."""
         date_str = date_str.replace("-", "")
         
@@ -50,6 +57,14 @@ class TradeManager:
             del self.history["holdings"][code]
             
         self._save_history()
+
+        # Save to DB if available
+        if self.db:
+            db_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+            # Calculate pnl_amt if we want it in DB (optional since we have avg price in balance, but here we just pass it)
+            # Actually, main.py calculates pnl_pct. Let's assume we might want pnl_amt later.
+            # Simplified: just save pct for now as passed.
+            self.db.save_trade_record(db_date, code, name, "SELL", float(price), int(qty), pnl_pct=float(pnl_pct))
 
     def get_holding_days(self, code, current_date_str=None):
         """Calculate how many days held."""

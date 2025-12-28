@@ -127,8 +127,8 @@ def main():
         parse_trade_log.parse_log()
     else:
         logging.info("📜 trade_history.json found. Loading existing history.")
-        
-    trade_manager = TradeManager()
+    db_manager = DBManager()
+    trade_manager = TradeManager(db=db_manager)
 
     # Disable Slack in Mock Mode
     if kis.is_mock:
@@ -307,6 +307,7 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
     for item in final_buys:
         state["buy_targets"].append({
             "code": item['code'],
+            "name": item['name'],
             "rsi": item['rsi'],
             "close_yesterday": float(item['close_price']), # DB column name
             "target_qty": 0 # Calculated later
@@ -380,7 +381,7 @@ def run_pre_order(kis, slack, trade_manager):
         if success:
             slack.send_message(f"🚀 Pre-Order: {code} {qty}ea @ {limit_price}")
             # Update History (Assume filled later, but tracking holding start from Order Date)
-            trade_manager.update_buy(code, get_now_kst().strftime("%Y%m%d"))
+            trade_manager.update_buy(code, target['name'], get_now_kst().strftime("%Y%m%d"), limit_price, qty)
         else:
             slack.send_message(f"❌ Pre-Order Failed {code}: {msg}")
             
@@ -586,7 +587,7 @@ def run_sell_execution(kis, slack, strategy, trade_manager):
                  else:
                      pnl_pct = 0.0
                      
-                 trade_manager.update_sell(code, get_now_kst().strftime("%Y%m%d"), pnl_pct)
+                 trade_manager.update_sell(code, name, get_now_kst().strftime("%Y%m%d"), curr, qty, pnl_pct)
              else:
                  slack.send_message(f"❌ Sell Failed {name}: {msg}")
 
