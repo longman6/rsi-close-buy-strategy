@@ -14,6 +14,7 @@ from src.ai_manager import AIManager # New
 from src.db_manager import DBManager
 from src.utils import get_now_kst
 import os
+import ast
 
 # Setup Logging for Cron
 # We will log to a file in the project directory
@@ -49,20 +50,33 @@ def get_kosdaq150_universe():
 
     except Exception as e:
         logging.error(f"PyKRX Universe Fetch Error: {e}")
-        # Retain Fallback just in case
+        
+        # Fallback: Read from local file 'kosdaq150_list.txt'
+        fallback_file = "kosdaq150_list.txt"
+        if os.path.exists(fallback_file):
+            logging.info(f"📂 Loading universe from {fallback_file}...")
+            universe = []
+            try:
+                with open(fallback_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.endswith(','): 
+                            line = line[:-1] # Remove trailing comma
+                        if not line: continue
+                        
+                        try:
+                            item = ast.literal_eval(line)
+                            universe.append(item)
+                        except:
+                            pass
+                return universe
+            except Exception as fe:
+                logging.error(f"File Fallback Error: {fe}")
+        
+        # Ultimate Fallback if file missing
         return [
             {'code': '247540', 'name': '에코프로비엠'},
             {'code': '086520', 'name': '에코프로'},
-            {'code': '028300', 'name': 'HLB'},
-            {'code': '066970', 'name': '엘앤에프'},
-            {'code': '403870', 'name': 'HPSP'},
-            {'code': '035900', 'name': 'JYP Ent.'},
-            {'code': '025980', 'name': '아난티'},
-            {'code': '293490', 'name': '카카오게임즈'},
-            {'code': '068270', 'name': '셀트리온제약'},
-            {'code': '357780', 'name': '솔브레인'},
-            {'code': '402280', 'name': '이랜텍'},
-            {'code': '112040', 'name': '위메이드'}
         ]
 
 def analyze_kosdaq150():
