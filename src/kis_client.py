@@ -345,6 +345,8 @@ class KISClient:
                 return {
                     'cash_available': self.get_buyable_cash(), # Real Orderable Cash
                     'total_asset': float(summary.get('tot_evlu_amt', 0)),
+                    'total_pnl': float(summary.get('evlu_pfls_smt_tl', 0)),
+                    'total_return_rate': float(summary.get('evlu_pfls_rt', 0)),
                     'holdings': holdings 
                 }
             else:

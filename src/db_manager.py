@@ -62,6 +62,15 @@ class DBManager:
                     )
                 """)
                 
+                # Users Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        username TEXT PRIMARY KEY,
+                        password_hash TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
                 # Migration: Add specific_model column if it doesn't exist
                 cursor.execute("PRAGMA table_info(ai_advice)")
                 columns = [info[1] for info in cursor.fetchall()]
@@ -250,3 +259,39 @@ class DBManager:
         except Exception as e:
             logging.error(f"[DB] Fetch Trade History Error: {e}")
         return results
+
+    # --- User Management ---
+    def create_user(self, username, password_hash):
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT OR IGNORE INTO users (username, password_hash) VALUES (?, ?)", (username, password_hash))
+                conn.commit()
+                return True
+        except Exception as e:
+            logging.error(f"[DB] Create User Error: {e}")
+            return False
+
+    def get_user(self, username):
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+        except Exception as e:
+            logging.error(f"[DB] Get User Error: {e}")
+        return None
+
+    def update_password(self, username, new_password_hash):
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                cursor.execute("UPDATE users SET password_hash = ? WHERE username = ?", (new_password_hash, username))
+                conn.commit()
+                return True
+        except Exception as e:
+            logging.error(f"[DB] Update Password Error: {e}")
+            return False

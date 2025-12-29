@@ -10,6 +10,14 @@ from src.strategy import Strategy
 from src.trade_manager import TradeManager
 from src.db_manager import DBManager
 import config
+import src.auth as auth
+import extra_streamlit_components as stx
+
+# Cookie Manager
+cookie_manager = stx.CookieManager()
+
+# Initialize Default User (Run once)
+auth.init_default_user()
 
 # Page Config
 st.set_page_config(
@@ -33,13 +41,99 @@ def get_strategy():
 def get_trade_manager():
     return TradeManager()
 
-def main():
+# --- Authentication Logic ---
+def login_page():
+    st.title("🔒 Login Required")
+    
+    with st.form("login_form"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Login")
+        
+        if submit:
+            db = DBManager()
+            user = db.get_user(username)
+            if user and auth.verify_password(password, user['password_hash']):
+                token = auth.create_token(username)
+                
+                # Set Session
+                st.session_state['token'] = token
+                st.session_state['username'] = username
+                
+                # Set Cookie (72h) -> expires_at is datetime
+                expires = datetime.now() + timedelta(hours=72)
+                cookie_manager.set("auth_token", token, expires_at=expires)
+                
+                st.success("Login Successful!")
+                time.sleep(1) # Wait for cookie to set
+                st.rerun()
+            else:
+                st.error("Invalid Username or Password")
+
+def logout():
+    if 'token' in st.session_state:
+        del st.session_state['token']
+    if 'username' in st.session_state:
+        del st.session_state['username']
+    
+    # Delete Cookie
+    # Delete Cookie
+    cookie_manager.delete("auth_token")
+    
+    # Prevent immediate re-login from stale cookie
+    st.session_state['just_logged_out'] = True
+    st.rerun()
+
+def render_change_password_page():
+    st.title("🔐 Change Password")
+    username = st.session_state.get('username')
+    
+    if not username:
+        st.error("Not logged in.")
+        return
+
+    with st.form("change_password_form"):
+        current_password = st.text_input("Current Password", type="password")
+        new_password = st.text_input("New Password", type="password")
+        confirm_password = st.text_input("Confirm New Password", type="password")
+        submit = st.form_submit_button("Update Password")
+        
+        if submit:
+            if new_password != confirm_password:
+                st.error("New passwords do not match.")
+                return
+            
+            if len(new_password) < 4:
+                st.error("Password must be at least 4 characters.")
+                return
+
+            db = DBManager()
+            user = db.get_user(username)
+            
+            if user and auth.verify_password(current_password, user['password_hash']):
+                new_hash = auth.hash_password(new_password)
+                if db.update_password(username, new_hash):
+                    st.success("Password updated successfully!")
+                else:
+                    st.error("Failed to update password in DB.")
+            else:
+                st.error("Incorrect current password.")
+
+def main_dashboard():
+    # Sidebar Logout Button
+    with st.sidebar:
+        st.write(f"Logged in as: **{st.session_state.get('username', 'User')}**")
+        if st.button("Logout"):
+            logout()
+        st.markdown("---")
+
     st.sidebar.title("🤖 RSI Power Bot")
     page = st.sidebar.radio("Navigation", [
         "📊 Dashboard (KIS)", 
         "🧠 AI Advice", 
         "📉 Full RSI List (KOSDAQ 150)",
-        "📈 Trade History"
+        "📈 Trade History",
+        "🔐 Change Password"
     ])
     
     if page == "📊 Dashboard (KIS)":
@@ -48,8 +142,43 @@ def main():
         render_ai_advice_page()
     elif page == "📈 Trade History":
         render_trade_history_page()
-    else:
+    elif page == "📉 Full RSI List (KOSDAQ 150)":
         render_full_rsi_page()
+    elif page == "🔐 Change Password":
+        render_change_password_page()
+
+def main():
+    # 1. Check Session State
+    token = st.session_state.get('token')
+    
+    # 2. If no session, Check Cookie
+    if not token:
+        # If we just logged out, skip cookie check and clear the flag
+        if st.session_state.get('just_logged_out'):
+             del st.session_state['just_logged_out']
+        else:
+            token = cookie_manager.get("auth_token")
+            if token:
+                 # Verify found cookie
+                 username = auth.verify_token(token)
+                 if username:
+                     st.session_state['token'] = token
+                     st.session_state['username'] = username
+                     st.rerun() # Rerun to update state
+    
+    # 3. Final Verification
+    if token:
+        username = auth.verify_token(token)
+        if username:
+            main_dashboard()
+        else:
+            # Invalid Token (Expired or Fake)
+            if 'token' in st.session_state:
+                del st.session_state['token']
+            cookie_manager.delete("auth_token")
+            login_page()
+    else:
+        login_page()
 
 def render_dashboard():
     st.title("📊 Real-time Dashboard")
@@ -84,7 +213,27 @@ def render_dashboard():
     st.divider()
     
     # Holdings Table
-    st.markdown("### 📈 Current Holdings")
+    total_pnl = balance.get('total_pnl', 0)
+    total_rate = balance.get('total_return_rate', 0)
+    
+    # Fallback: Calculate manually if API returns 0 but we have holdings
+    if total_pnl == 0 and balance.get('holdings'):
+        calc_pnl = 0
+        total_purchase = 0
+        for h in balance['holdings']:
+             qty = int(h['hldg_qty'])
+             if qty > 0:
+                 p_pnl = float(h['evlu_pfls_amt'])
+                 p_avg = float(h['pchs_avg_pric'])
+                 calc_pnl += p_pnl
+                 total_purchase += (p_avg * qty)
+        
+        if total_purchase > 0:
+            total_pnl = calc_pnl
+            total_rate = (total_pnl / total_purchase) * 100
+
+    pnl_color = "red" if total_pnl >= 0 else "blue"
+    st.markdown(f"### 📈 Current Holdings | P/L: :{pnl_color}[{total_pnl:,.0f} KRW ({total_rate:.2f}%)]")
     
     if holdings:
         holdings_data = []
