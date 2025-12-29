@@ -334,9 +334,12 @@ def render_ai_advice_page():
         
         # Expander Title
         price_fmt = f"{int(row['close_price']):,}" if pd.notna(row['close_price']) else "N/A"
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        
         title = f":{color}[{summary}] **{name}** ({code}) | RSI: {rsi:.2f} | Close: {price_fmt} KRW"
         
         with st.expander(title):
+            st.markdown(f"### 🔗 [{name} ({code})]({url})")
             if not opinions:
                 st.caption("No advice details.")
             else:
@@ -345,12 +348,18 @@ def render_ai_advice_page():
                     op = opinions[0]
                     rec = op['recommendation']
                     reason = op['reasoning']
+                    prompt = op.get('prompt', 'No prompt recorded.')
+                    
                     if rec == "YES":
                         st.success(f"**{op['model']} Recommendation: {rec}**\n\n{reason}")
                     elif rec == "NO":
                         st.error(f"**{op['model']} Recommendation: {rec}**\n\n{reason}")
                     else:
                         st.warning(f"**{op['model']} Recommendation: {rec}**\n\n{reason}")
+                        
+                    with st.expander("📝 View Analysis Prompt Used"):
+                        st.code(prompt, language='text')
+
                 else:
                     # Tabs View (Consensus)
                     model_names = [op['model'] for op in opinions]
@@ -360,12 +369,17 @@ def render_ai_advice_page():
                         with tab:
                             rec = op['recommendation']
                             reason = op['reasoning']
+                            prompt = op.get('prompt', 'No prompt recorded.')
+                            
                             if rec == "YES":
                                 st.success(f"**Recommendation: {rec}**\n\n{reason}")
                             elif rec == "NO":
                                 st.error(f"**Recommendation: {rec}**\n\n{reason}")
                             else:
                                 st.warning(f"**Recommendation: {rec}**\n\n{reason}")
+                            
+                            with st.expander("📝 View Analysis Prompt Used"):
+                                st.code(prompt, language='text')
 
 
 def render_full_rsi_page():
