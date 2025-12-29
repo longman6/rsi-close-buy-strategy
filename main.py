@@ -7,8 +7,7 @@ import pytz
 from datetime import datetime, timedelta
 import config
 from src.kis_client import KISClient
-from src.slack_bot import SlackBot
-from src.slack_bot import SlackBot
+from src.telegram_bot import TelegramBot
 from src.strategy import Strategy
 from src.trade_manager import TradeManager
 from src.db_manager import DBManager
@@ -16,7 +15,6 @@ from src.db_manager import DBManager
             # if current_time == "07:00": ...
 from scripts import parse_trade_log
 
-# Setup Logging
 # Setup Logging
 def kst_converter(*args):
     return datetime.now(pytz.timezone('Asia/Seoul')).timetuple()
@@ -43,7 +41,8 @@ state = {
     "last_reset_date": None,
     "is_holiday": False,
     "exclude_list": set(),
-    "gemini_advice_done": False
+    "gemini_advice_done": False,
+    "last_sent_hour": -1 # Track hourly notifications
 }
 
 def load_exclusion_list(kis=None):
@@ -67,16 +66,16 @@ def load_exclusion_list(kis=None):
                     name = "Unknown"
                     try:
                         # Fetch price info to get name
-                        # Note: get_current_price might fail if market is closed or rate limited,
-                        # but usually returns static info.
-                        # We use a short sleep to avoid TPS limits if list is long.
                         time.sleep(0.1) 
-                        curr = kis.get_current_price(code)
-                        if curr:
-                            # Try to find name in output
-                            # Common fields: 'rprs_mrkt_kor_name', 'hts_kor_isnm'
-                            # Output of inquire-price (FHKST01010100)
-                            name = curr.get('hts_kor_isnm') or "Unknown"
+                        # Use get_stock_info first (most reliable for name)
+                        info = kis.get_stock_info(code)
+                        if info:
+                            name = info.get('prdt_name', "Unknown")
+                        else:
+                            # Fallback
+                            curr = kis.get_current_price(code)
+                            if curr:
+                                name = curr.get('hts_kor_isnm') or "Unknown"
                     except Exception:
                         pass
                     logging.info(f"   - {code} : {name}")
@@ -96,12 +95,11 @@ def reset_daily_state(kis):
         state["buy_verified"] = False
         state["sell_check_done"] = False
         state["sell_exec_done"] = False
-        state["sell_exec_done"] = False
-        state["sell_exec_done"] = False
         state["buy_targets"] = []
         state["exclude_list"] = load_exclusion_list(kis)
         state["gemini_advice_done"] = False
         state["last_reset_date"] = today
+        state["last_sent_hour"] = -1
         
         # Check Holiday
         today_str = today.replace("-", "")
@@ -116,9 +114,7 @@ def main():
     logging.info("🚀 Continuous RSI Power Zone Bot Started")
     
     kis = KISClient()
-    slack = SlackBot()
-    kis = KISClient()
-    slack = SlackBot()
+    telegram = TelegramBot() # Changed from SlackBot
     strategy = Strategy()
     
     # 0. Initialize Trade Manager & Parse Logs (Startup)
@@ -130,12 +126,12 @@ def main():
     db_manager = DBManager()
     trade_manager = TradeManager(db=db_manager)
 
-    # Disable Slack in Mock Mode
-    if kis.is_mock:
-        logging.info("[Main] Mock Mode: Slack Disabled, Delays Increased.")
-        slack.enabled = False
-    
-    slack.send_message("🤖 Bot Loop Started. Waiting for schedule...")
+    # Disable Telegram in Mock Mode? User might still want logs.
+    # User requested control via .env ENABLE_NOTIFICATIONS, so we respect that.
+    if kis.is_mock and telegram.enabled:
+         telegram.send_message("🤖 Bot Loop Started (Mock Mode). Waiting for schedule...")
+    elif telegram.enabled:
+         telegram.send_message("🤖 Bot Loop Started (Real Mode). Waiting for schedule...")
 
     # FORCE Initial State Reset (to load exclusion list and check holiday)
     reset_daily_state(kis)
@@ -145,18 +141,15 @@ def main():
     logging.info(f"⏰ KST Clock Check: {startup_kst}")
     logging.info(f"📅 Daily State: Analysis={state['analysis_done']}, PreOrder={state['pre_order_done']}")
 
-    # Initial Status Display (Run once on startup)
-    # Initial Status Display (Run once on startup)
+            # Initial Status Display (Run once on startup)
     logging.info("📊 Checking Initial Holdings...")
     try:
-        display_holdings_status(kis, slack, strategy, trade_manager)
+        display_holdings_status(kis, telegram, strategy, trade_manager, force=True)
     except Exception as e:
         logging.error(f"Failed to display initial status (Network/API Error): {e}")
 
     while True:
         try:
-            now = get_now_kst()
-            current_time = now.strftime("%H:%M")
             now = get_now_kst()
             current_time = now.strftime("%H:%M")
             reset_daily_state(kis)
@@ -169,7 +162,7 @@ def main():
             if not state["is_holiday"]:
                 if current_time >= config.TIME_MORNING_ANALYSIS and current_time <= "08:50":
                     if not state["analysis_done"]:
-                        run_morning_analysis(kis, slack, strategy, trade_manager)
+                        run_morning_analysis(kis, telegram, strategy, trade_manager)
                         state["analysis_done"] = True
                 elif current_time > "08:50" and not state["analysis_done"]:
                     # If started late (after 08:50), skip analysis
@@ -177,12 +170,11 @@ def main():
                     state["analysis_done"] = True
 
             # 2. 08:57 Pre-Market Order
-            # 2. 08:57 Pre-Market Order
             # Window: 08:57 ~ 09:10
             if not state["is_holiday"]:
                 if current_time >= config.TIME_PRE_ORDER and current_time <= "09:10":
                     if not state["pre_order_done"]:
-                        run_pre_order(kis, slack, trade_manager)
+                        run_pre_order(kis, telegram, trade_manager)
                         state["pre_order_done"] = True
                 elif current_time > "09:10" and not state["pre_order_done"]:
                     # If started late, skip pre-order
@@ -191,25 +183,23 @@ def main():
                 
             # 3. 09:05 ~ Order Verification & Correction Loop
             # This runs repeatedly every minute starting from 09:05 until ... say 15:00?
-            # Or just "If verify not done, or continuous check?"
-            # Requirement: "09:05 check... then every 1 min check..."
             if not state["is_holiday"]:
                 if current_time >= config.TIME_ORDER_CHECK and current_time < config.TIME_SELL_CHECK:
-                     monitor_and_correct_orders(kis, slack, trade_manager)
+                     monitor_and_correct_orders(kis, telegram, trade_manager)
 
-            # Periodic Display of Holdings (Always run, throttled inside)
-            display_holdings_status(kis, slack, strategy, trade_manager)
+            # Periodic Display of Holdings (Scheduled Hourly at XX:10)
+            display_holdings_status(kis, telegram, strategy, trade_manager)
 
             # 4. 15:20 Sell Signal Check
             if not state["is_holiday"]:
                 if current_time >= config.TIME_SELL_CHECK and not state["sell_check_done"]:
-                    run_sell_check(kis, slack, strategy, trade_manager)
+                    run_sell_check(kis, telegram, strategy, trade_manager)
                     state["sell_check_done"] = True
 
             # 5. 15:26 Sell Execution (Market/Best)
             if not state["is_holiday"]:
                 if current_time >= config.TIME_SELL_EXEC and not state["sell_exec_done"]:
-                    run_sell_execution(kis, slack, strategy, trade_manager)
+                    run_sell_execution(kis, telegram, strategy, trade_manager)
                     state["sell_exec_done"] = True
             
             time.sleep(1)
@@ -221,10 +211,10 @@ def main():
             logging.error(f"⚠️ Main Loop Error: {e}")
             time.sleep(5)
 
-def run_morning_analysis(kis, slack, strategy, trade_manager):
+def run_morning_analysis(kis, telegram, strategy, trade_manager):
     """08:30: Calculate RSI, Select Candidates using DB Consensus"""
     logging.info("🔍 [08:30] Starting Morning Analysis...")
-    slack.send_message("🔍 [08:30] Morning Analysis Started")
+    telegram.send_message("🔍 [08:30] Morning Analysis Started")
 
     balance = kis.get_balance()
     if not balance:
@@ -237,7 +227,7 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
     
     if slots_open <= 0:
         logging.info("Portfolio Full. No new buys.")
-        slack.send_message("ℹ️ Portfolio Full. No new buys.")
+        telegram.send_message("ℹ️ Portfolio Full. No new buys.")
         return
 
     # NEW LOGIC: Query DB
@@ -253,7 +243,7 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
     if not low_rsi_candidates:
         msg = f"ℹ️ No stocks with RSI < {rsi_threshold} found for {today_str}."
         logging.info(msg)
-        slack.send_message(msg)
+        telegram.send_message(msg)
         # We stop here because intersection will be empty anyway
         return
 
@@ -264,7 +254,7 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
     if not consensus_codes:
         msg = "ℹ️ No stocks with 4-LLM Consensus found."
         logging.info(msg)
-        slack.send_message(msg)
+        telegram.send_message(msg)
         return
 
     candidates = []
@@ -314,18 +304,20 @@ def run_morning_analysis(kis, slack, strategy, trade_manager):
         })
     
     msg = f"✅ Analysis Done. Selected {len(final_buys)} candidates (RSI<{rsi_threshold} + 4-LLM Consensus)."
-    logging.info(msg)
-    slack.send_message(msg)
-
-def run_pre_order(kis, slack, trade_manager):
-    """08:57: Place Limit Order = Expected + 5 Ticks (or Yesterday Close + 5 Ticks if no output)"""
-    # Note: KIS 'get_current_price' might have 'Expected Price' (dnca or similar) before market open.
-    # But simplifying: Use Yesterday Close * 1.02 ?? 
-    # User Request: "Expected Execution Price + 5 ticks". 
-    # We will try to fetch Expected Price. If not avail, use Close.
     
+    if final_buys:
+        msg += "\n\n📋 <b>Selected Candidates:</b>"
+        for item in final_buys:
+             # item keys: code, name, rsi, close_price
+             msg += f"\n• {item['name']} ({item['code']}) | RSI: {item['rsi']:.2f} | Close: {item['close_price']:,.0f}"
+
+    logging.info(msg)
+    telegram.send_message(msg)
+
+def run_pre_order(kis, telegram, trade_manager):
+    """08:57: Place Limit Order"""
     logging.info("⏰ [08:57] Placing Pre-Orders...")
-    slack.send_message("⏰ [08:57] Placing Pre-Orders")
+    telegram.send_message("⏰ [08:57] Placing Pre-Orders")
     
     if not state["buy_targets"]:
         logging.info("No targets to buy.")
@@ -336,7 +328,6 @@ def run_pre_order(kis, slack, trade_manager):
     count = len(state["buy_targets"])
     if count == 0: return
 
-    # amt_per_stock = (cash * config.ALLOCATION_PCT) # Deprecated
     # Use Fixed Amount from Config
     amt_per_stock = config.BUY_AMOUNT_KRW
     
@@ -345,7 +336,7 @@ def run_pre_order(kis, slack, trade_manager):
     if total_needed > cash:
         msg = f"⚠️ 예수금 부족! 필요: {total_needed:,.0f}원, 보유: {cash:,.0f}원. 일부 주문이 거부될 수 있습니다."
         logging.warning(msg)
-        slack.send_message(msg) 
+        telegram.send_message(msg) 
 
     for target in state["buy_targets"]:
         code = target['code']
@@ -356,17 +347,12 @@ def run_pre_order(kis, slack, trade_manager):
         # Fetch Expected Price
         curr = kis.get_current_price(code)
         
-        # Try to find expected price (antc_cnpr: Anticipated Conclusion Price) if avail
-        # Output of inquire-price has 'antc_cnpr'.
         if curr and int(curr.get('antc_cnpr', 0)) > 0:
             base_price = float(curr['antc_cnpr'])
         else:
             base_price = target['close_yesterday']
             
-        # +5 Ticks Logic... simple approx +2%? or strict tick math?
-        # User said "5 ticks high". 
-        # Lets just use +1.5% as safe proxy for 5 ticks, or use get_valid_price logic iteratively.
-        # Adding 1.5% is roughly 3-5 ticks depending on price range.
+        # +1.5% as proxy for 5 ticks
         limit_price = int(base_price * 1.015) 
         limit_price = kis.get_valid_price(limit_price)
         
@@ -376,25 +362,22 @@ def run_pre_order(kis, slack, trade_manager):
         target['target_qty'] = qty # Update state
         
         # Place Order
-        # 00: Limit
         success, msg = kis.send_order(code, qty, side="buy", price=limit_price, order_type="00")
         if success:
-            slack.send_message(f"🚀 Pre-Order: {code} {qty}ea @ {limit_price}")
-            # Update History (Assume filled later, but tracking holding start from Order Date)
+            telegram.send_message(f"🚀 Pre-Order: {code} {qty}ea @ {limit_price}")
+            # Update History (Assume filled later)
             trade_manager.update_buy(code, target['name'], get_now_kst().strftime("%Y%m%d"), limit_price, qty)
         else:
-            slack.send_message(f"❌ Pre-Order Failed {code}: {msg}")
+            telegram.send_message(f"❌ Pre-Order Failed {code}: {msg}")
             
         time.sleep(0.2)
 
 last_monitor_time = 0
 last_display_time = 0
 
-def monitor_and_correct_orders(kis, slack, trade_manager):
+def monitor_and_correct_orders(kis, telegram, trade_manager):
     """
     09:05 ~ Loop: Check Unfilled.
-    If unfilled, modify to Current Price.
-    BUT if Current Price > Yesterday Close * 1.05 (+5%), CANCEL order (Give up).
     """
     global last_monitor_time
     if time.time() - last_monitor_time < 60:
@@ -402,14 +385,11 @@ def monitor_and_correct_orders(kis, slack, trade_manager):
     
     last_monitor_time = time.time()
     
-    # logging.info("♻️ [Monitor] Checking Unfilled Orders...")
-    
     orders = kis.get_outstanding_orders()
     if not orders: return 
     
     for ord in orders:
         # Check if this is OUR buy order
-        # ord: {pdno, ord_qty, ccld_qty ...}
         code = ord['pdno']
         
         # Find matching target in state
@@ -427,11 +407,9 @@ def monitor_and_correct_orders(kis, slack, trade_manager):
         if current_price > yesterday_close * 1.05:
             logging.info(f"🚫 {code} rose too much (>5%). Cancelling...")
             kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], 0, 0, is_cancel=True)
-            slack.send_message(f"🗑️ Cancelled {code}: Price > +5%")
+            telegram.send_message(f"🗑️ Cancelled {code}: Price > +5%")
         else:
             # Modify to Current Price (Chase)
-            # Only if current price != order price?
-            # ord_unpr (Price)
             order_price = float(ord['ord_unpr'])
             if order_price != current_price:
                  logging.info(f"✏️ Correcting {code} to Current Price {current_price}")
@@ -439,31 +417,52 @@ def monitor_and_correct_orders(kis, slack, trade_manager):
                  rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
                  if rem_qty > 0:
                      kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], rem_qty, current_price, is_cancel=False)
-                     slack.send_message(f"✏️ Modified {code} -> {current_price}")
+                     telegram.send_message(f"✏️ Modified {code} -> {current_price}")
 
-def display_holdings_status(kis, slack, strategy, trade_manager):
+def display_holdings_status(kis, telegram, strategy, trade_manager, force=False):
     """
-    Step 7: Check Every 1 min and display info.
-    We combine this with monitor loop.
+    Schedule: Every hour at minute 10 (08:10, 09:10, ..., 18:10)
     """
-    global last_display_time
-    if time.time() - last_display_time < 60:
+    now = get_now_kst()
+    hour = now.hour
+    minute = now.minute
+    
+    # Condition: 
+    # 1. Force (Startup) or
+    # 2. Time is between 08:00 and 18:00 AND
+    # 3. Minute is 10 AND
+    # 4. We haven't sent for this hour yet.
+    
+    should_send = False
+    
+    if force:
+        should_send = True
+    elif 8 <= hour <= 18:
+        if minute == 10:
+             if state["last_sent_hour"] != hour:
+                 should_send = True
+    
+    if not should_send:
         return
 
-    last_display_time = time.time()
+    # Update State
+    if not force:
+        state["last_sent_hour"] = hour
 
-    # Assuming run once per minute along with monitor.
+    # Fetch Data
     balance = kis.get_balance()
     if not balance: return
     
     holdings = [h for h in balance['holdings'] if int(h['hldg_qty']) > 0]
-    if not holdings: return
     
-    # Visual Separator for new loop
+    if not holdings:
+        if force: logging.info("No holdings to display.")
+        return
+        
+    msg_lines = [f"📊 Holdings Status ({now.strftime('%H:%M')})"]
     logging.info("-" * 60)
     
     # Optimization: Fetch shorter history for RSI(3) display
-    # Must be > SMA_WINDOW (100) to ensure calculate_indicators adds columns
     start_date = (get_now_kst() - timedelta(days=200)).strftime("%Y%m%d")
     
     for h in holdings:
@@ -487,13 +486,19 @@ def display_holdings_status(kis, slack, strategy, trade_manager):
         
         days_held = trade_manager.get_holding_days(code)
         
-        msg = f"📊 {name}({code}): Now {curr:,.0f} / Buy {avg:,.0f} | RSI: {rsi_val:.2f} | P/L: {profit_amt:,.0f} ({profit_pct:.2f}%) | Held: {days_held}d"
-        logging.info(msg)
+        line = f"🔹 {name}: {curr:,.0f} (RSI: {rsi_val:.2f}) | P/L: {profit_pct:.2f}% ({days_held}d)"
+        
+        msg_lines.append(line)
+        logging.info(line)
+        
+    # Send combined message
+    full_msg = "\n".join(msg_lines)
+    telegram.send_message(full_msg)
 
-def run_sell_check(kis, slack, strategy, trade_manager):
+def run_sell_check(kis, telegram, strategy, trade_manager):
     """15:20 Sell Check"""
     logging.info("⚖️ [15:20] Checking Sell Signals...")
-    slack.send_message("⚖️ [15:20] Checking Sell Signals")
+    telegram.send_message("⚖️ [15:20] Checking Sell Signals")
     
     balance = kis.get_balance()
     if not balance: return
@@ -505,28 +510,10 @@ def run_sell_check(kis, slack, strategy, trade_manager):
         code = h['pdno']
         name = h['prdt_name']
         
-        df = kis.get_daily_ohlcv(code) # Need fresh data (including today's incomplete candle?)
-        # Actually daily OHLCV usually updates strictly after close or delayed.
-        # But we need Current RSI.
-        # We can append current price to DF? 
-        # Strategy.calculate_indicators handles DF.
-        # Ideally we fetch minute candle or append current price as today's close.
+        df = kis.get_daily_ohlcv(code)
         
-        curr = kis.get_current_price(code)
-        if curr:
-            # Construct Pseudo-Row for today if missing or update it
-            # Simplified: Just check if RSI(3) of yesterday was high?
-            # No, user wants active check.
-            # Lets run analyze_stock on current df.
-            pass
-            
         # Check Exclusion
         if code in state["exclude_list"]:
-             # If excluded, DO NOT SELL automatically? Or FORCE SELL?
-             # User said: "Don't buy OR SELL". So we skip selling logic.
-             # But if it's in portfolio, maybe we should just ignore it.
-             # "매수도 매도도 하지 않도록" -> Skip.
-             # logging.info(f"🚫 Sell Check Skipped {code} (Excluded)")
              continue
 
         df = strategy.calculate_indicators(df)
@@ -536,23 +523,13 @@ def run_sell_check(kis, slack, strategy, trade_manager):
         if strategy.check_sell_signal(code, df) or forced_sell:
              reason = "Forced (Max Holding)" if forced_sell else "Signal"
              logging.info(f"🔻 Sell Signal Identified for {name} ({code}) [{reason}]")
-             # Mark for selling
-             # For simplicity, we can just sell NOW or wait for 15:26 EXEC.
-             # User said: "15:20 Check... 15:26 Execute Market Sell".
-             # We should probably store "To Sell" list.
-             # but to keep it simple, we can just sell at 15:26 by re-checking or storing.
-             pass
 
-def run_sell_execution(kis, slack, strategy, trade_manager):
+def run_sell_execution(kis, telegram, strategy, trade_manager):
     """15:26 Execute Market Sell for targets"""
     logging.info("💸 [15:26] Executing Market Sells...")
-    slack.send_message("💸 [15:26] Market Sell Execution")
-    
-    # We re-run logic or iterate holdings. 
-    # Efficient way: Logic same as 'run_sell_check' but SEND ORDER.
+    telegram.send_message("💸 [15:26] Market Sell Execution")
     
     balance = kis.get_balance()
-    # strategy = Strategy() # Use injected strategy
     
     for h in balance['holdings']:
         qty = int(h['hldg_qty'])
@@ -577,7 +554,7 @@ def run_sell_execution(kis, slack, strategy, trade_manager):
              # Execute Market Sell (01)
              success, msg = kis.send_order(code, qty, side="sell", price=0, order_type="01")
              if success:
-                 slack.send_message(f"👋 Sold {name} ({reason}): {msg}")
+                 telegram.send_message(f"👋 Sold {name} ({reason}): {msg}")
                  
                  # Calculate P/L for History
                  curr = float(h['prpr'])
@@ -589,7 +566,7 @@ def run_sell_execution(kis, slack, strategy, trade_manager):
                      
                  trade_manager.update_sell(code, name, get_now_kst().strftime("%Y%m%d"), curr, qty, pnl_pct)
              else:
-                 slack.send_message(f"❌ Sell Failed {name}: {msg}")
+                 telegram.send_message(f"❌ Sell Failed {name}: {msg}")
 
 if __name__ == "__main__":
     main()
