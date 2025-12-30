@@ -436,32 +436,41 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
 
 def display_holdings_status(kis, telegram, strategy, trade_manager, force=False):
     """
-    Schedule: Every hour at minute 10 (08:10, 09:10, ..., 18:10)
+    Schedule: 
+      - Console Log: Every minute (approx)
+      - Telegram: Every hour at minute 10 (08:10, 09:10, ..., 18:10)
     """
     now = get_now_kst()
     hour = now.hour
     minute = now.minute
+    current_time_str = now.strftime("%H:%M")
     
-    # Condition: 
-    # 1. Force (Startup) or
-    # 2. Time is between 08:00 and 18:00 AND
-    # 3. Minute is 10 AND
-    # 4. We haven't sent for this hour yet.
+    # --- 1. Control Console Logging Frequency (Every Minute) ---
+    should_log = False
+    if state.get("last_log_minute") != current_time_str:
+        should_log = True
+        state["last_log_minute"] = current_time_str
+        
+    if force: should_log = True
     
-    should_send = False
+    # If we don't need to log AND don't need to send, return early
+    # But wait, we need to check if we should send telegram.
     
+    # --- 2. Control Telegram Frequency (Hourly at XX:10) ---
+    should_send_telegram = False
     if force:
-        should_send = True
+        should_send_telegram = True
     elif 8 <= hour <= 18:
         if minute == 10:
              if state["last_sent_hour"] != hour:
-                 should_send = True
+                 should_send_telegram = True
     
-    if not should_send:
+    # If neither, skip
+    if not should_log and not should_send_telegram:
         return
 
-    # Update State
-    if not force:
+    # Update Telegram State
+    if should_send_telegram and not force:
         state["last_sent_hour"] = hour
 
     # Fetch Data
@@ -470,12 +479,14 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, force=False)
     
     holdings = [h for h in balance['holdings'] if int(h['hldg_qty']) > 0]
     
+    # If no holdings, maybe just return unless force?
     if not holdings:
         if force: logging.info("No holdings to display.")
         return
         
     msg_lines = [f"📊 Holdings Status ({now.strftime('%H:%M')})"]
-    logging.info("-" * 60)
+    if should_log:
+        logging.info("-" * 60)
     
     # Optimization: Fetch shorter history for RSI(3) display
     start_date = (get_now_kst() - timedelta(days=200)).strftime("%Y%m%d")
@@ -487,6 +498,7 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, force=False)
         avg = float(h['pchs_avg_pric'])
         
         # Calculate RSI
+        # Only fetch if we are going to log OR send
         time.sleep(0.2 if kis.is_mock else 0.1) # Brief delay
         df = kis.get_daily_ohlcv(code, start_date=start_date)
         rsi_val = 0.0
@@ -504,11 +516,15 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, force=False)
         line = f"🔹 {name}: {curr:,.0f} (RSI: {rsi_val:.2f}) | P/L: {profit_pct:.2f}% ({days_held}d)"
         
         msg_lines.append(line)
-        logging.info(line)
         
-    # Send combined message
-    full_msg = "\n".join(msg_lines)
-    telegram.send_message(full_msg)
+        # LOGGING (Every Minute)
+        if should_log:
+            logging.info(line)
+        
+    # TELEGRAM (Hourly)
+    if should_send_telegram:
+        full_msg = "\n".join(msg_lines)
+        telegram.send_message(full_msg)
 
 def run_sell_check(kis, telegram, strategy, trade_manager):
     """15:20 Sell Check"""
