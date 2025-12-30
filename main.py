@@ -303,7 +303,7 @@ def run_morning_analysis(kis, telegram, strategy, trade_manager):
             "target_qty": 0 # Calculated later
         })
     
-    msg = f"✅ Analysis Done. Selected {len(final_buys)} candidates (RSI<{rsi_threshold} + 4-LLM Consensus)."
+    msg = f"✅ Analysis Done. Selected {len(final_buys)} candidates (RSI &lt; {rsi_threshold} + 4-LLM Consensus)."
     
     if final_buys:
         msg += "\n\n📋 <b>Selected Candidates:</b>"
@@ -329,12 +329,14 @@ def run_pre_order(kis, telegram, trade_manager):
     if count == 0: return
 
     # Use Fixed Amount from Config
-    amt_per_stock = config.BUY_AMOUNT_KRW
+    amt_per_stock_config = config.BUY_AMOUNT_KRW
     
-    # Check if we have enough cash (Optional warning)
-    total_needed = amt_per_stock * count
-    if total_needed > cash:
-        msg = f"⚠️ 예수금 부족! 필요: {total_needed:,.0f}원, 보유: {cash:,.0f}원. 일부 주문이 거부될 수 있습니다."
+    current_cash = cash
+    
+    # Check if we have enough cash (Warning)
+    total_needed = amt_per_stock_config * count
+    if total_needed > current_cash:
+        msg = f"⚠️ 예수금 부족 예측! 필요: {total_needed:,.0f}원, 보유: {current_cash:,.0f}원. 주문 금액을 자동으로 조정합니다."
         logging.warning(msg)
         telegram.send_message(msg) 
 
@@ -356,7 +358,16 @@ def run_pre_order(kis, telegram, trade_manager):
         limit_price = int(base_price * 1.015) 
         limit_price = kis.get_valid_price(limit_price)
         
-        qty = int(amt_per_stock / limit_price)
+        # Check Cash for this Order
+        amt_to_use = amt_per_stock_config
+        if current_cash < amt_to_use:
+            amt_to_use = current_cash
+            if amt_to_use < limit_price:
+                telegram.send_message(f"❌ Skipping {code}: 예수금 절대 부족 ({int(amt_to_use):,}원)")
+                continue
+            logging.warning(f"📉 {code}: 예수금 부족으로 주문 금액 조정 ({amt_per_stock_config:,} -> {int(amt_to_use):,}원)")
+
+        qty = int(amt_to_use / limit_price)
         if qty < 1: continue
         
         target['target_qty'] = qty # Update state
@@ -367,6 +378,10 @@ def run_pre_order(kis, telegram, trade_manager):
             telegram.send_message(f"🚀 Pre-Order: {code} {qty}ea @ {limit_price}")
             # Update History (Assume filled later)
             trade_manager.update_buy(code, target['name'], get_now_kst().strftime("%Y%m%d"), limit_price, qty)
+            
+            # Update Local Cash Estimate (Approximate)
+            order_amt = limit_price * qty
+            current_cash -= order_amt
         else:
             telegram.send_message(f"❌ Pre-Order Failed {code}: {msg}")
             
