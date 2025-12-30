@@ -133,6 +133,7 @@ def main_dashboard():
         "🧠 AI Advice", 
         "📉 Full RSI List (KOSDAQ 150)",
         "📈 Trade History",
+        "💳 LLM Billing & Usage",
         "🔐 Change Password"
     ])
     
@@ -146,6 +147,76 @@ def main_dashboard():
         render_full_rsi_page()
     elif page == "🔐 Change Password":
         render_change_password_page()
+    elif page == "💳 LLM Billing & Usage":
+        render_credit_page()
+
+def render_credit_page():
+    st.title("💳 LLM Billing & Usage")
+    st.markdown("### Active Models & Billing Links")
+    st.info("Most LLM providers do not allow checking credit balance via API for security reasons. Please use the links below to check your usage.")
+    
+    # Load AI Config
+    from src.ai_manager import AIManager
+    try:
+        # We instantiate AIManager just to get config, ignoring init cost for now or cache it
+        # Actually initializing AIManager connects to clients which is fine but maybe heavy?
+        # Let's just read the json directly or trust AIManager is light enough.
+        # AIManager init does environment checks.
+        ai_manager = AIManager()
+        config = ai_manager.config
+    except Exception as e:
+        st.error(f"Failed to load AI Config: {e}")
+        return
+
+    # Providers Data
+    providers = [
+        {
+            "id": "openai", 
+            "name": "OpenAI (ChatGPT)", 
+            "link": "https://platform.openai.com/settings/organization/billing/overview", 
+            "desc": "Check API Usage"
+        },
+        {
+            "id": "claude", 
+            "name": "Anthropic (Claude)", 
+            "link": "https://console.anthropic.com/settings/plans", 
+            "desc": "Check Credits"
+        },
+        {
+            "id": "gemini", 
+            "name": "Google (Gemini)", 
+            "link": "https://aistudio.google.com/usage?timeRange=last-28-days&tab=billing&project=gen-lang-client-0904665104", 
+            "desc": "Check Quota/Plan"
+        },
+        {
+            "id": "grok", 
+            "name": "xAI (Grok)", 
+            "link": "https://console.x.ai/", 
+            "desc": "Check Billing"
+        }
+    ]
+
+    # Create 2 columns
+    col1, col2 = st.columns(2)
+    
+    for i, p in enumerate(providers):
+        p_cfg = config.get(p["id"], {})
+        is_enabled = p_cfg.get("enabled", False)
+        model = p_cfg.get("model", "N/A")
+        
+        status_icon = "✅" if is_enabled else "❌"
+        status_text = "Active" if is_enabled else "Disabled"
+        
+        with (col1 if i % 2 == 0 else col2):
+            with st.container(border=True):
+                st.subheader(f"{p['name']}")
+                st.write(f"**Status:** {status_icon} {status_text}")
+                st.write(f"**Model:** `{model}`")
+                
+                if is_enabled:
+                    st.link_button(f"🔗 {p['desc']}", p['link'])
+                else:
+                    st.caption("Enable in llm_config.json to use.")
 
 def main():
     # 1. Check Session State
