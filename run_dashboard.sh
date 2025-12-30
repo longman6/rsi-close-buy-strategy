@@ -9,5 +9,7 @@ source .venv/bin/activate
 # Use a specific port if needed, default is 8501
 # You can pass arguments to this script to be passed to streamlit
 # e.g., ./run_dashboard.sh --server.port 8502
-echo "🚀 Starting RSI Power Zone Dashboard..."
-streamlit run dashboard.py "$@"
+echo "🚀 Starting RSI Power Zone Dashboard in BACKGROUND..."
+nohup streamlit run dashboard.py "$@" > dashboard.log 2>&1 &
+echo "✅ Dashboard is running in the background. Logs: dashboard.log"
+echo "👉 PID: $!"
