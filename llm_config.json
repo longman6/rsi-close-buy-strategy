@@ -1,12 +1,12 @@
 {
     "gemini": {
         "enabled": true,
-        "model": "gemini-3-flash-preview",
+        "model": "gemini-3-pro-preview",
         "env_key": "GEMINI_API_KEY"
     },
     "claude": {
         "enabled": true,
-        "model": "claude-sonnet-4-5-20250929",
+        "model": "cclaude-opus-4-5-20251101",
         "env_key": "CLAUDE_API_KEY"
     },
     "openai": {

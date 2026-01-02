@@ -48,3 +48,4 @@ stock_analysis.db
 *.db
 backtest_result.png
 *.png
+test_openai.py

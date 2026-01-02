@@ -97,6 +97,13 @@ def analyze_kosdaq150():
             return # Exit function
     except Exception as e:
         logging.error(f"Market Day Check Failed: {e}")
+        # Send Emergency Telegram
+        try:
+            from src.telegram_bot import TelegramBot
+            telegram = TelegramBot()
+            telegram.send_message(f"🚨 [Urgent] Market Day Check Failed in Analysis: {e}")
+        except:
+            pass
         # Proceed if check fails? Or exit? Usually safe to proceed or maybe fallback. 
         # But user wants to stop on holiday. If error, let's log and proceed or return?
         # Let's assume proceed on error to be safe, but logged.
@@ -109,89 +116,109 @@ def analyze_kosdaq150():
     db = DBManager()
     ai_manager = AIManager() # New Manager
     
-    universe = get_kosdaq150_universe()
-    logging.info(f"Loaded {len(universe)} stocks from KOSDAQ 150.")
-    
-    today_str = get_now_kst().strftime("%Y-%m-%d")
-    
-    for i, item in enumerate(universe):
-        code = item['code']
-        name = item['name']
+    # Setup Telegram for Error Reporting
+    from src.telegram_bot import TelegramBot
+    telegram = TelegramBot()
+
+    try:
+        universe = get_kosdaq150_universe()
+        logging.info(f"Loaded {len(universe)} stocks from KOSDAQ 150.")
         
-        # Optimize: 250 days history
-        start_dt = (get_now_kst() - timedelta(days=250)).strftime("%Y%m%d")
+        today_str = get_now_kst().strftime("%Y-%m-%d")
         
-        try:
-            # 1. Fetch OHLCV
-            # KIS Rate Limit handling
-            delay = 0.5 if kis.is_mock else 0.1 
-            time.sleep(delay)
+        for i, item in enumerate(universe):
+            code = item['code']
+            name = item['name']
             
-            df = kis.get_daily_ohlcv(code, start_date=start_dt)
-            if df.empty: continue
+            # Optimize: 250 days history
+            start_dt = (get_now_kst() - timedelta(days=250)).strftime("%Y%m%d")
             
-            # 2. Calculate Indicators
-            df = strategy.calculate_indicators(df)
-            if df.empty: continue
-            
-            # Get latest
-            latest = df.iloc[-1]
-            
-            # Check if RSI exists
-            if 'RSI' not in df.columns or pd.isna(latest['RSI']):
+            try:
+                # 1. Fetch OHLCV
+                # KIS Rate Limit handling
+                delay = 0.5 if kis.is_mock else 0.1 
+                time.sleep(delay)
+                
+                df = kis.get_daily_ohlcv(code, start_date=start_dt)
+                if df.empty: continue
+                
+                # 2. Calculate Indicators
+                df = strategy.calculate_indicators(df)
+                if df.empty: continue
+                
+                # Get latest
+                latest = df.iloc[-1]
+                
+                # Check if RSI exists
+                if 'RSI' not in df.columns or pd.isna(latest['RSI']):
+                    continue
+                    
+                # Get latest values and cast to Python native types (crucial for SQLite)
+                rsi_val = float(latest.get('RSI', 0)) if pd.notna(latest.get('RSI')) else None
+                close_val = float(latest.get('Close', 0))
+                
+                # 3. AI Advice Logic
+                # Query if RSI <= 15 (User Request)
+                if rsi_val is not None and rsi_val <= 15:
+                     logging.info(f"👀 Low RSI Candidate (<=15): {name}({code}) RSI={rsi_val:.2f}")
+                     
+                     # Check Danger before spending tokens
+                     is_danger, reason = kis.check_dangerous_stock(code)
+                     if is_danger:
+                         logging.info(f"🚫 Removing Dangerous Candidate {code}: {reason}")
+                         # Cleanly skipping AI calls
+                     else:
+                         # Prepare OHLCV Text (Last 30 days)
+                         recent_df = df.tail(30)
+                         ohlcv_text = recent_df[['Open', 'High', 'Low', 'Close', 'Volume', 'RSI']].to_string()
+
+                         # Ask AI Manager (All Enabled Models)
+                         logging.info(f"🤖 Asking AIs about {name}...")
+                         advice_list = ai_manager.get_aggregated_advice(name, code, rsi_val, ohlcv_text)
+                         
+                         # Save individual advice to ai_advice table
+                         for advice in advice_list:
+                             model = advice.get('model')
+                             specific_model = advice.get('specific_model')
+                             rec = advice.get('recommendation')
+                             reasoning = advice.get('reasoning')
+                             prompt = advice.get('prompt')
+                             
+                             db.save_ai_advice(today_str, code, model, rec, reasoning, specific_model, prompt)
+                             logging.info(f"   > {model} ({specific_model}): {rec}")
+
+                # Save to DB (Main Record - Pure RSI)
+                db.save_rsi_result(
+                    date=today_str,
+                    code=code,
+                    name=name,
+                    rsi=rsi_val,
+                    close_price=close_val
+                )
+
+                if i % 10 == 0:
+                    logging.info(f"Processed {i}/{len(universe)}: {name} RSI={rsi_val:.2f} (Saved to DB)")
+
+            except Exception as e:
+                logging.error(f"Error processing {code}: {e}")
+                # We do NOT send telegram for individual stock errors to avoid spam, unless it's critical?
+                # Usually per-stock errors are tolerable.
                 continue
                 
-            # Get latest values and cast to Python native types (crucial for SQLite)
-            rsi_val = float(latest.get('RSI', 0)) if pd.notna(latest.get('RSI')) else None
-            close_val = float(latest.get('Close', 0))
-            
-            # 3. AI Advice Logic
-            # Query if RSI <= 15 (User Request)
-            if rsi_val is not None and rsi_val <= 15:
-                 logging.info(f"👀 Low RSI Candidate (<=15): {name}({code}) RSI={rsi_val:.2f}")
-                 
-                 # Check Danger before spending tokens
-                 is_danger, reason = kis.check_dangerous_stock(code)
-                 if is_danger:
-                     logging.info(f"🚫 Removing Dangerous Candidate {code}: {reason}")
-                     # Cleanly skipping AI calls
-                 else:
-                     # Prepare OHLCV Text (Last 30 days)
-                     recent_df = df.tail(30)
-                     ohlcv_text = recent_df[['Open', 'High', 'Low', 'Close', 'Volume', 'RSI']].to_string()
+        logging.info(f"✅ Analysis Completed. Results saved to DB for {today_str}.")
+        telegram.send_message(f"✅ Daily Analysis Completed for {today_str}. ({len(universe)} stocks scanned)")
 
-                     # Ask AI Manager (All Enabled Models)
-                     logging.info(f"🤖 Asking AIs about {name}...")
-                     advice_list = ai_manager.get_aggregated_advice(name, code, rsi_val, ohlcv_text)
-                     
-                     # Save individual advice to ai_advice table
-                     for advice in advice_list:
-                         model = advice.get('model')
-                         specific_model = advice.get('specific_model')
-                         rec = advice.get('recommendation')
-                         reasoning = advice.get('reasoning')
-                         prompt = advice.get('prompt')
-                         
-                         db.save_ai_advice(today_str, code, model, rec, reasoning, specific_model, prompt)
-                         logging.info(f"   > {model} ({specific_model}): {rec}")
-
-            # Save to DB (Main Record - Pure RSI)
-            db.save_rsi_result(
-                date=today_str,
-                code=code,
-                name=name,
-                rsi=rsi_val,
-                close_price=close_val
-            )
-
-            if i % 10 == 0:
-                logging.info(f"Processed {i}/{len(universe)}: {name} RSI={rsi_val:.2f} (Saved to DB)")
-
-        except Exception as e:
-            logging.error(f"Error processing {code}: {e}")
-            continue
-            
-    logging.info(f"✅ Analysis Completed. Results saved to DB for {today_str}.")
+    except Exception as fatal_e:
+        logging.error(f"🚨 CRITICAL: Analysis Script Failed: {fatal_e}")
+        try:
+            telegram.send_message(f"🚨 [CRITICAL] Daily Analysis Failed!\nError: {fatal_e}")
+        except:
+            logging.error("Failed to send error telegram.")
 
 if __name__ == "__main__":
-    analyze_kosdaq150()
+    try:
+        analyze_kosdaq150()
+    except Exception as e:
+        # Fallback for very outer scope
+        logging.critical(f"Unhandled Exception: {e}")
+
