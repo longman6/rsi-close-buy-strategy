@@ -7,7 +7,7 @@ import platform
 import matplotlib.font_manager as fm
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ---------------------------------------------------------
 # 1. 한글 폰트 설정
@@ -97,8 +97,17 @@ def calculate_rsi(data, window):
     return rsi
 
 def prepare_data(tickers, start_date, rsi_window, sma_window):
-    print(f"[{len(tickers)}개 종목] 데이터 다운로드 및 지표 계산 (SMA {sma_window}, RSI {rsi_window})...")
-    data = yf.download(tickers, start=start_date, progress=True)
+    # SMA 계산을 위한 충분한 데이터 확보 (약 6개월 전부터 로드)
+    # start_date may be string or datetime
+    if isinstance(start_date, str):
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    else:
+        start_dt = start_date
+        
+    fetch_start_date = (start_dt - timedelta(days=200)).strftime("%Y-%m-%d")
+    
+    print(f"[{len(tickers)}개 종목] 데이터 다운로드 ({fetch_start_date}~) 및 지표 계산...")
+    data = yf.download(tickers, start=fetch_start_date, progress=True)
 
     stock_data = {}
     valid_tickers = []
@@ -117,14 +126,17 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
             if ticker not in closes.columns: continue
             series = closes[ticker].dropna()
 
-            # SMA 계산을 위해 충분한 데이터가 있는지 확인 (SMA 기간 + 10일 여유)
+            # SMA 계산을 위해 충분한 데이터가 있는지 확인
             if len(series) < sma_window + 10: continue
 
             df = series.to_frame(name='Close')
 
-            # [지표 계산] 파라미터 변수 사용
+            # [지표 계산]
             df['SMA'] = df['Close'].rolling(window=sma_window).mean()
             df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
+            
+            # [기간 필터링] 지표 계산 후, 사용자가 요청한 start_date 이후 데이터만 남김
+            df = df[df.index >= start_dt]
 
             df.dropna(inplace=True)
 
@@ -360,5 +372,65 @@ def run_backtest():
         f.write(summary)
     print("✅ 리포트 저장 완료.")
 
+def run_2025_dec_comparison():
+    print("\n🚀 2025년 12월 1일 ~ 현재 백테스트 비교 시작")
+    tickers = get_kosdaq150_tickers()
+    start_date = '2025-12-01'
+    
+    # Strategy A: RSI 3, SMA 100
+    print("\n>>> 전략 A: RSI 3, SMA 100")
+    stock_data1, valid_tickers1 = prepare_data(tickers, start_date, 3, 100)
+    ret1, mdd1, win1, cnt1, hist1, trades1 = run_simulation(stock_data1, valid_tickers1, use_filter=False)
+    
+    # Strategy B: RSI 5, SMA 50
+    print("\n>>> 전략 B: RSI 5, SMA 50")
+    stock_data2, valid_tickers2 = prepare_data(tickers, start_date, 5, 50)
+    ret2, mdd2, win2, cnt2, hist2, trades2 = run_simulation(stock_data2, valid_tickers2, use_filter=False)
+    
+    # Generate Report
+    report_filename = "backtest_2025_dec_comparison.md"
+    
+    # Helper to clean trade df
+    def format_trades(df):
+        if df.empty: return "거래 없음"
+        df = df.copy()
+        df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+        df['Return'] = df['Return'].apply(lambda x: f"{x:.2f}%")
+        # Markdown Table
+        header = "| 날짜 | 종목코드 | 수익률 |\n| :--- | :--- | :--- |\n"
+        rows = ""
+        for _, row in df.iterrows():
+            rows += f"| {row['Date']} | {row['Ticker']} | {row['Return']} |\n"
+        return header + rows
+
+    comparison_summary = f"""
+# RSI 전략 상세 비교 (2025-12-01 ~ 현재)
+
+**생성일:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+## 1. 성과 요약
+| 구분 | 전략 A (RSI 3, SMA 100) | 전략 B (RSI 5, SMA 50) |
+| :--- | :--- | :--- |
+| **수익률** | **{ret1:.2f}%** | **{ret2:.2f}%** |
+| **MDD** | {mdd1:.2f}% | {mdd2:.2f}% |
+| **승률** | {win1:.2f}% | {win2:.2f}% |
+| **거래수** | {cnt1}회 | {cnt2}회 |
+
+## 2. 상세 거래 내역
+
+### 전략 A (RSI 3, SMA 100)
+{format_trades(trades1)}
+
+### 전략 B (RSI 5, SMA 50)
+{format_trades(trades2)}
+"""
+    
+    with open(report_filename, "w", encoding="utf-8") as f:
+        f.write(comparison_summary)
+    
+    print(comparison_summary)
+    print(f"\n✅ 상세 리포트가 '{report_filename}'에 저장되었습니다.")
+
 if __name__ == "__main__":
-    run_backtest()
+    # run_backtest() # Existing full backtest
+    run_2025_dec_comparison() # New requested backtest
