@@ -138,16 +138,14 @@ def prepare_data(tickers, start_date):
 # ---------------------------------------------------------
 # 4. 시뮬레이션 엔진
 # ---------------------------------------------------------
-def run_backtest():
-    tickers = get_kosdaq150_tickers()
-    stock_data, valid_tickers = prepare_data(tickers, START_DATE)
-
-    if not valid_tickers:
-        print("데이터 확보 실패")
-        return
-
+# ---------------------------------------------------------
+# 4. 시뮬레이션 엔진
+# ---------------------------------------------------------
+def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False):
     all_dates = sorted(list(set().union(*[df.index for df in stock_data.values()])))
-    print(f"\n시뮬레이션 시작 ({len(all_dates)}일)...")
+    # If using filter, ensure we have market data for these dates
+    if use_filter and market_data is not None:
+         market_data = market_data.reindex(all_dates).ffill()
 
     cash = INITIAL_CAPITAL
     positions = {}
@@ -182,7 +180,6 @@ def run_backtest():
             sell_price = stock_data[ticker].loc[date, 'Close']
 
             sell_amt = pos['shares'] * sell_price
-            # 수수료 + 세금 + 매도 슬리피지 적용
             cost = sell_amt * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
             cash += (sell_amt - cost)
 
@@ -192,8 +189,20 @@ def run_backtest():
             trades.append({'Ticker': ticker, 'Return': net_return, 'Date': date})
 
         # 2. 매수
+        # Market Filter Check
+        market_condition_ok = True
+        if use_filter and market_data is not None:
+            if date in market_data.index:
+                 mkt_close = market_data.loc[date, 'Close']
+                 mkt_sma = market_data.loc[date, 'SMA_20']
+                 if mkt_close < mkt_sma:
+                     market_condition_ok = False
+            else:
+                 # If no market data, assume OK or Skip? Let's assume OK to be less restrictive on missing data
+                 pass
+
         open_slots = MAX_POSITIONS - len(positions)
-        if open_slots > 0:
+        if open_slots > 0 and market_condition_ok:
             buy_candidates = []
             for ticker in valid_tickers:
                 if ticker in positions: continue
@@ -210,23 +219,23 @@ def run_backtest():
                 for candidate in buy_candidates[:open_slots]:
                     target_amt = total_equity * ALLOCATION_PER_STOCK
                     invest_amt = min(target_amt, cash)
-                    # 수수료 + 매수 슬리피지 고려
                     max_buy_amt = invest_amt / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
 
                     if max_buy_amt < 10000: continue
                     shares = int(max_buy_amt / candidate['price'])
                     if shares > 0:
                         buy_val = shares * candidate['price']
-                        # 실제 현금 차감 (금액 + 수수료 + 슬리피지)
                         cash -= (buy_val + buy_val * (TX_FEE_RATE + SLIPPAGE_RATE))
                         positions[candidate['ticker']] = {
                             'shares': shares, 'buy_price': candidate['price'],
                             'last_price': candidate['price']
                         }
 
-    # 결과 분석
+    # 결과 정리
     hist_df = pd.DataFrame(history).set_index('Date')
     trades_df = pd.DataFrame(trades)
+    
+    if hist_df.empty: return 0, 0, 0, 0, pd.DataFrame()
 
     final_ret = (hist_df['Equity'].iloc[-1] / INITIAL_CAPITAL - 1) * 100
     peak = hist_df['Equity'].cummax()
@@ -235,151 +244,93 @@ def run_backtest():
     win_rate = 0
     if not trades_df.empty:
         win_rate = len(trades_df[trades_df['Return'] > 0]) / len(trades_df) * 100
+        
+    return final_ret, mdd, win_rate, len(trades_df), hist_df
 
-    # 벤치마크 (KODEX 코스닥150 & KODEX 200)
-    def get_benchmark_equity(ticker, label):
-        try:
-            print(f"[{label}] 데이터 다운로드 중...")
-            # Use 'max' period if start_date is very old, or just use start_date
-            data = yf.download(ticker, start=START_DATE, progress=False)
-            
-            if data is None or data.empty:
-                print(f"[경고] {label} 데이터를 가져오지 못했습니다.")
-                return None, 0, 0
-                
-            # Handle MultiIndex or Single Level Index
-            if isinstance(data.columns, pd.MultiIndex):
-                # Selection for yfinance MultiIndex (Level 0: Price, Level 1: Ticker)
-                if 'Close' in data.columns.get_level_values(0):
-                    bm = data.xs('Close', axis=1, level=0)
-                    if ticker in bm.columns:
-                        bm = bm[ticker]
-                    else:
-                        bm = bm.iloc[:, 0]
-                else:
-                    bm = data.iloc[:, 0] # Fallback
-            else:
-                if 'Close' in data.columns:
-                    bm = data['Close']
-                else:
-                    bm = data.iloc[:, 0]
-            
-            bm = bm.reindex(all_dates).ffill()
-            first_valid = bm.first_valid_index()
-            if first_valid:
-                start_val = bm.loc[first_valid]
-                equity = (bm / start_val) * INITIAL_CAPITAL
-                equity = equity.fillna(INITIAL_CAPITAL)
-                ret = (equity.iloc[-1] / INITIAL_CAPITAL - 1) * 100
-                mdd = ((equity - equity.cummax()) / equity.cummax()).min() * 100
-                return equity, ret, mdd
-        except Exception as e:
-            print(f"[경고] {label} 처리 중 오류: {e}")
-        return None, 0, 0
-
-    bm_kq_equity, bm_kq_ret, bm_kq_mdd = get_benchmark_equity('229200.KS', 'KOSDAQ 150')
-    bm_ks_equity, bm_ks_ret, bm_ks_mdd = get_benchmark_equity('069500.KS', 'KOSPI 200')
-
-    # ---------------------------------------------------------
-    # 5. 연도별 수익률 분석 (Yearly Breakdown)
-    # ---------------------------------------------------------
-    hist_df['Year'] = hist_df.index.year
-    years = sorted(hist_df['Year'].unique())
+def run_backtest():
+    tickers = get_kosdaq150_tickers()
+    stock_data, valid_tickers = prepare_data(tickers, START_DATE)
     
-    yearly_md_lines = []
+    # Market Data for Filter (KODEX KOSDAQ150)
+    print("시장 지수 데이터(KODEX 코스닥150) 다운로드 중...")
+    market_df = yf.download('229200.KS', start=START_DATE, progress=False)
+    # Handle yfinance structure
+    if isinstance(market_df.columns, pd.MultiIndex):
+        if 'Close' in market_df.columns.get_level_values(0): 
+            market_df = market_df.xs('Close', axis=1, level=0)
+            # If ticker name is column, select it, else take first
+            if '229200.KS' in market_df.columns: market_df = market_df['229200.KS'].to_frame('Close')
+            else: market_df = market_df.iloc[:, 0].to_frame('Close')
+        else: market_df = market_df.iloc[:, 0].to_frame('Close')
+    else: # Single Index
+         if 'Close' not in market_df.columns: market_df = market_df.iloc[:, 0].to_frame('Close')
+         else: market_df = market_df[['Close']]
+    
+    market_df['SMA_20'] = market_df['Close'].rolling(window=20).mean()
+
+    print("\n--- 전략 1: 기존 전략 (필터 X) ---")
+    ret1, mdd1, win1, cnt1, hist1 = run_simulation(stock_data, valid_tickers, market_data=market_df, use_filter=False)
+    
+    print("\n--- 전략 2: 마켓 필터 전략 (지수 > 20일선) ---")
+    ret2, mdd2, win2, cnt2, hist2 = run_simulation(stock_data, valid_tickers, market_data=market_df, use_filter=True)
+
+    # 연도별 비교 표 생성
+    hist1['Year'] = hist1.index.year
+    hist2['Year'] = hist2.index.year
+    years = sorted(list(set(hist1['Year'].unique()) | set(hist2['Year'].unique())))
+
+    yearly_lines = []
+    
+    start_eq1 = INITIAL_CAPITAL
+    start_eq2 = INITIAL_CAPITAL
     
     for year in years:
-        year_data = hist_df[hist_df['Year'] == year]
-        if year_data.empty: continue
+        row = f"| {year} |"
         
-        # Calculate Year Start Equity
-        if year == years[0]:
-             start_eq = INITIAL_CAPITAL
-        else:
-             prev_data = hist_df[hist_df['Year'] == year - 1]
-             if not prev_data.empty:
-                 start_eq = prev_data['Equity'].iloc[-1]
-             else:
-                 start_eq = INITIAL_CAPITAL
+        # Strategy 1
+        y1 = hist1[hist1['Year'] == year]
+        if not y1.empty:
+            ret_y1 = (y1['Equity'].iloc[-1] / start_eq1 - 1) * 100
+            start_eq1 = y1['Equity'].iloc[-1]
+            row += f" {ret_y1:6.2f}% |"
+        else: row += "   -   |"
+            
+        # Strategy 2
+        y2 = hist2[hist2['Year'] == year]
+        if not y2.empty:
+            ret_y2 = (y2['Equity'].iloc[-1] / start_eq2 - 1) * 100
+            start_eq2 = y2['Equity'].iloc[-1]
+            row += f" {ret_y2:6.2f}% |"
+        else: row += "   -   |"
         
-        end_eq = year_data['Equity'].iloc[-1]
-        y_return = (end_eq / start_eq - 1) * 100
-        
-        # Calculate MDD for the year (Normalized)
-        norm_eq = year_data['Equity'] / start_eq
-        local_peak = norm_eq.cummax()
-        local_dd = (norm_eq - local_peak) / local_peak
-        y_mdd = local_dd.min() * 100
-        
-        # Calculate Win Rate & Trades
-        if not trades_df.empty:
-             # Ensure 'Year' column exists in trades_df
-             trades_df['Year_Trade'] = pd.to_datetime(trades_df['Date']).dt.year
-             y_trades = trades_df[trades_df['Year_Trade'] == year]
-             y_count = len(y_trades)
-             y_win = len(y_trades[y_trades['Return'] > 0])
-             y_win_rate = (y_win / y_count * 100) if y_count > 0 else 0
-        else:
-             y_count = 0
-             y_win_rate = 0
-             
-        row_str = f"| {year} | {y_return:6.2f}% | {y_mdd:6.2f}% | {y_win_rate:6.2f}% | {y_count}회 |"
-        yearly_md_lines.append(row_str)
+        yearly_lines.append(row)
 
-    yearly_table_md = "\n".join(yearly_md_lines)
+    yearly_table = "\n".join(yearly_lines)
 
-    # 출력
-    summary_text = f"""
-### [테스트 실행 리포트] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- **유니버스**: 코스닥 150 ({len(tickers)}종목)
-- **기간**: {START_DATE} ~ 현재 (연도별 분석 포함)
-- **설정**: RSI({RSI_WINDOW}), SMA({SMA_WINDOW}), 매수<{BUY_THRESHOLD}, 매도>{SELL_THRESHOLD}
-- **비용**: 수수료 {TX_FEE_RATE*100:.3f}%, 세금 {TAX_RATE*100:.2f}%, 슬리피지 {SLIPPAGE_RATE*100:.1f}%
+    summary = f"""
+### [마켓 필터 비교 리포트] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- **설정**: RSI {RSI_WINDOW}, SMA {SMA_WINDOW}
+- **비교**: 기존 전략 vs 마켓 필터(KOSDAQ 150 > 20일선) 적용
 
-#### 1. 전체 성과
-| 구분 | 전략 (RSI {RSI_WINDOW}, SMA {SMA_WINDOW}) | 벤치마크 (KOSDAQ 150) | 벤치마크 (KOSPI 200) |
-| :--- | :--- | :--- | :--- |
-| **수익률** | **{final_ret:.2f}%** | {bm_kq_ret:.2f}% | {bm_ks_ret:.2f}% |
-| **MDD** | {mdd:.2f}% | {bm_kq_mdd:.2f}% | {bm_ks_mdd:.2f}% |
-| **승률** | {win_rate:.2f}% | - | - |
-| **거래횟수** | {len(trades_df)}회 | - | - |
+| 구분 | 전략 1 (기존) | 전략 2 (지수필터) |
+| :--- | :--- | :--- |
+| **수익률** | **{ret1:.2f}%** | **{ret2:.2f}%** |
+| **MDD** | {mdd1:.2f}% | {mdd2:.2f}% |
+| **승률** | {win1:.2f}% | {win2:.2f}% |
+| **거래수** | {cnt1}회 | {cnt2}회 |
 
-#### 2. 연도별 성과 (Yearly Performance)
-| 연도 | 수익률 | MDD | 승률 | 거래횟수 |
-| :--- | :--- | :--- | :--- | :--- |
-{yearly_table_md}
+#### 연도별 수익률 비교
+| 연도 | 기존 전략 | 필터 전략 |
+| :--- | :--- | :--- |
+{yearly_table}
 
 ---
 """
-    print(summary_text)
-
-    # 리포트 파일에 추가
-    report_file = "backtest_report.md"
-    try:
-        with open(report_file, "a", encoding="utf-8") as f:
-            f.write(summary_text)
-        print(f"✅ 결과가 '{report_file}'에 추가되었습니다.")
-    except Exception as e:
-        print(f"❌ 리포트 저장 실패: {e}")
-
-    # 시각화
-    plt.figure(figsize=(12, 7))
-    plt.plot(hist_df.index, hist_df['Equity'], label=f'Strategy (RSI {RSI_WINDOW}, SMA {SMA_WINDOW})', color='red', linewidth=2)
-    if bm_kq_equity is not None:
-        plt.plot(bm_kq_equity.index, bm_kq_equity, label='KOSDAQ 150 (KODEX)', color='blue', linestyle='--', alpha=0.6)
-    if bm_ks_equity is not None:
-        plt.plot(bm_ks_equity.index, bm_ks_equity, label='KOSPI 200 (KODEX)', color='green', linestyle=':', alpha=0.6)
-
-    plt.title(f'Performance Comparison: Strategy vs Benchmarks')
-    plt.ylabel('Equity (KRW)')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    print(summary)
     
-    # Save results as image
-    output_file = "backtest_result.png"
-    plt.savefig(output_file)
-    print(f"\n📈 백테스트 결과 차트가 저장되었습니다: {output_file}")
-    # plt.show()
+    with open("backtest_report.md", "a", encoding="utf-8") as f:
+        f.write(summary)
+    print("✅ 리포트 저장 완료.")
 
 if __name__ == "__main__":
     run_backtest()
