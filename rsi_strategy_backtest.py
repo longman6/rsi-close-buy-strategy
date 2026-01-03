@@ -372,10 +372,37 @@ def run_backtest():
         f.write(summary)
     print("✅ 리포트 저장 완료.")
 
-def run_2025_dec_comparison():
-    print("\n🚀 2025년 12월 1일 ~ 현재 백테스트 비교 시작")
+def get_kosdaq150_ticker_map():
+    """Load KOSDAQ 150 tickers and names from local file 'kosdaq150_list.txt'."""
+    filename = 'kosdaq150_list.txt'
+    ticker_map = {}
+    try:
+        import ast
+        if not os.path.exists(filename):
+             return {}
+
+        with open(filename, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                if line.endswith(','): line = line[:-1]
+                try:
+                    data = ast.literal_eval(line)
+                    code = data['code'] + '.KQ'
+                    name = data['name']
+                    ticker_map[code] = name
+                except:
+                    pass
+        return ticker_map
+    except Exception as e:
+        print(f"[Map Load Error] {e}")
+        return {}
+
+def run_2025_full_year_comparison():
+    print("\n🚀 2025년 1월 1일 ~ 현재 (Full Year) 백테스트 비교 시작")
     tickers = get_kosdaq150_tickers()
-    start_date = '2025-12-01'
+    ticker_map = get_kosdaq150_ticker_map()
+    start_date = '2025-01-01'
     
     # Strategy A: RSI 3, SMA 100
     print("\n>>> 전략 A: RSI 3, SMA 100")
@@ -388,7 +415,7 @@ def run_2025_dec_comparison():
     ret2, mdd2, win2, cnt2, hist2, trades2 = run_simulation(stock_data2, valid_tickers2, use_filter=False)
     
     # Generate Report
-    report_filename = "backtest_2025_dec_comparison.md"
+    report_filename = "backtest_2025_full_comparison.md"
     
     # Helper to clean trade df
     def format_trades(df):
@@ -396,16 +423,24 @@ def run_2025_dec_comparison():
         df = df.copy()
         df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
         df['Return'] = df['Return'].apply(lambda x: f"{x:.2f}%")
+        
+        # Add Stock Name
+        def get_name(code):
+            return ticker_map.get(code, code)
+            
+        df['Name'] = df['Ticker'].apply(get_name)
+        
         # Markdown Table
-        header = "| 날짜 | 종목코드 | 수익률 |\n| :--- | :--- | :--- |\n"
+        header = "| 날짜 | 종목명 | 코드 | 수익률 |\n| :--- | :--- | :--- | :--- |\n"
         rows = ""
         for _, row in df.iterrows():
-            rows += f"| {row['Date']} | {row['Ticker']} | {row['Return']} |\n"
+            rows += f"| {row['Date']} | {row['Name']} | {row['Ticker']} | {row['Return']} |\n"
         return header + rows
 
     comparison_summary = f"""
-# RSI 전략 상세 비교 (2025-12-01 ~ 현재)
+# RSI 전략 상세 비교 (2025년 전체)
 
+**기간:** 2025-01-01 ~ 현재
 **생성일:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 ## 1. 성과 요약
@@ -432,5 +467,6 @@ def run_2025_dec_comparison():
     print(f"\n✅ 상세 리포트가 '{report_filename}'에 저장되었습니다.")
 
 if __name__ == "__main__":
-    # run_backtest() # Existing full backtest
-    run_2025_dec_comparison() # New requested backtest
+    # run_backtest() 
+    # run_2025_dec_comparison()
+    run_2025_full_year_comparison()
