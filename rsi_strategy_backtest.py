@@ -96,8 +96,8 @@ def calculate_rsi(data, window):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-def prepare_data(tickers, start_date):
-    print(f"[{len(tickers)}개 종목] 데이터 다운로드 및 지표 계산 (SMA {SMA_WINDOW}, RSI {RSI_WINDOW})...")
+def prepare_data(tickers, start_date, rsi_window, sma_window):
+    print(f"[{len(tickers)}개 종목] 데이터 다운로드 및 지표 계산 (SMA {sma_window}, RSI {rsi_window})...")
     data = yf.download(tickers, start=start_date, progress=True)
 
     stock_data = {}
@@ -107,8 +107,8 @@ def prepare_data(tickers, start_date):
         try:
             closes = data.xs('Close', axis=1, level=0)
         except:
-             if 'Close' in data.columns.get_level_values(0): closes = data['Close']
-             else: return {}, []
+            if 'Close' in data.columns.get_level_values(0): closes = data['Close']
+            else: return {}, []
     else:
         closes = data['Close'] if 'Close' in data.columns else data
 
@@ -118,13 +118,13 @@ def prepare_data(tickers, start_date):
             series = closes[ticker].dropna()
 
             # SMA 계산을 위해 충분한 데이터가 있는지 확인 (SMA 기간 + 10일 여유)
-            if len(series) < SMA_WINDOW + 10: continue
+            if len(series) < sma_window + 10: continue
 
             df = series.to_frame(name='Close')
 
             # [지표 계산] 파라미터 변수 사용
-            df['SMA'] = df['Close'].rolling(window=SMA_WINDOW).mean()
-            df['RSI'] = calculate_rsi(df['Close'], window=RSI_WINDOW)
+            df['SMA'] = df['Close'].rolling(window=sma_window).mean()
+            df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
 
             df.dropna(inplace=True)
 
@@ -235,7 +235,7 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
     hist_df = pd.DataFrame(history).set_index('Date')
     trades_df = pd.DataFrame(trades)
     
-    if hist_df.empty: return 0, 0, 0, 0, pd.DataFrame()
+    if hist_df.empty: return 0, 0, 0, 0, pd.DataFrame(), pd.DataFrame()
 
     final_ret = (hist_df['Equity'].iloc[-1] / INITIAL_CAPITAL - 1) * 100
     peak = hist_df['Equity'].cummax()
@@ -245,38 +245,31 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
     if not trades_df.empty:
         win_rate = len(trades_df[trades_df['Return'] > 0]) / len(trades_df) * 100
         
-    return final_ret, mdd, win_rate, len(trades_df), hist_df
+    return final_ret, mdd, win_rate, len(trades_df), hist_df, trades_df
 
 def run_backtest():
     tickers = get_kosdaq150_tickers()
-    stock_data, valid_tickers = prepare_data(tickers, START_DATE)
     
-    # Market Data for Filter (KODEX KOSDAQ150)
-    print("시장 지수 데이터(KODEX 코스닥150) 다운로드 중...")
-    market_df = yf.download('229200.KS', start=START_DATE, progress=False)
-    # Handle yfinance structure
-    if isinstance(market_df.columns, pd.MultiIndex):
-        if 'Close' in market_df.columns.get_level_values(0): 
-            market_df = market_df.xs('Close', axis=1, level=0)
-            # If ticker name is column, select it, else take first
-            if '229200.KS' in market_df.columns: market_df = market_df['229200.KS'].to_frame('Close')
-            else: market_df = market_df.iloc[:, 0].to_frame('Close')
-        else: market_df = market_df.iloc[:, 0].to_frame('Close')
-    else: # Single Index
-         if 'Close' not in market_df.columns: market_df = market_df.iloc[:, 0].to_frame('Close')
-         else: market_df = market_df[['Close']]
     
-    market_df['SMA_20'] = market_df['Close'].rolling(window=20).mean()
+    # --- Strategy 1: RSI 3, SMA 100 ---
+    print("\n>>> 전략 1 데이터 준비: RSI 3, SMA 100")
+    stock_data1, valid_tickers1 = prepare_data(tickers, START_DATE, 3, 100)
+    print("\n>>> 전략 1 시뮬레이션 중...")
+    ret1, mdd1, win1, cnt1, hist1, trades1 = run_simulation(stock_data1, valid_tickers1, use_filter=False)
+    
+    # --- Strategy 2: RSI 5, SMA 50 ---
+    print("\n>>> 전략 2 데이터 준비: RSI 5, SMA 50")
+    stock_data2, valid_tickers2 = prepare_data(tickers, START_DATE, 5, 50)
+    print("\n>>> 전략 2 시뮬레이션 중...")
+    ret2, mdd2, win2, cnt2, hist2, trades2 = run_simulation(stock_data2, valid_tickers2, use_filter=False)
 
-    print("\n--- 전략 1: 기존 전략 (필터 X) ---")
-    ret1, mdd1, win1, cnt1, hist1 = run_simulation(stock_data, valid_tickers, market_data=market_df, use_filter=False)
-    
-    print("\n--- 전략 2: 마켓 필터 전략 (지수 > 20일선) ---")
-    ret2, mdd2, win2, cnt2, hist2 = run_simulation(stock_data, valid_tickers, market_data=market_df, use_filter=True)
-
-    # 연도별 비교 표 생성
+    # 연도별 비교 데이터 생성
     hist1['Year'] = hist1.index.year
     hist2['Year'] = hist2.index.year
+    
+    if not trades1.empty: trades1['Year_Trade'] = pd.to_datetime(trades1['Date']).dt.year
+    if not trades2.empty: trades2['Year_Trade'] = pd.to_datetime(trades2['Date']).dt.year
+
     years = sorted(list(set(hist1['Year'].unique()) | set(hist2['Year'].unique())))
 
     yearly_lines = []
@@ -287,41 +280,76 @@ def run_backtest():
     for year in years:
         row = f"| {year} |"
         
-        # Strategy 1
+        # Strategy A Stats
         y1 = hist1[hist1['Year'] == year]
         if not y1.empty:
-            ret_y1 = (y1['Equity'].iloc[-1] / start_eq1 - 1) * 100
-            start_eq1 = y1['Equity'].iloc[-1]
-            row += f" {ret_y1:6.2f}% |"
-        else: row += "   -   |"
+            end_eq1 = y1['Equity'].iloc[-1]
+            ret_y1 = (end_eq1 / start_eq1 - 1) * 100
             
-        # Strategy 2
+            # MDD
+            norm_eq1 = y1['Equity'] / start_eq1
+            local_dd1 = (norm_eq1 - norm_eq1.cummax()) / norm_eq1.cummax()
+            mdd_y1 = local_dd1.min() * 100
+            
+            start_eq1 = end_eq1 # Set start for next year
+        else:
+            ret_y1, mdd_y1 = 0, 0
+            
+        # Win Rate & Count A
+        if not trades1.empty:
+            t1 = trades1[trades1['Year_Trade'] == year]
+            cnt1 = len(t1)
+            win1 = len(t1[t1['Return'] > 0])
+            wr1 = (win1 / cnt1 * 100) if cnt1 > 0 else 0
+        else: cnt1, wr1 = 0, 0
+            
+        row += f" {ret_y1:6.2f}% | {mdd_y1:6.2f}% | {wr1:6.2f}% | {cnt1}회 |"
+
+        # Strategy B Stats
         y2 = hist2[hist2['Year'] == year]
         if not y2.empty:
-            ret_y2 = (y2['Equity'].iloc[-1] / start_eq2 - 1) * 100
-            start_eq2 = y2['Equity'].iloc[-1]
-            row += f" {ret_y2:6.2f}% |"
-        else: row += "   -   |"
+            end_eq2 = y2['Equity'].iloc[-1]
+            ret_y2 = (end_eq2 / start_eq2 - 1) * 100
+            
+            # MDD
+            norm_eq2 = y2['Equity'] / start_eq2
+            local_dd2 = (norm_eq2 - norm_eq2.cummax()) / norm_eq2.cummax()
+            mdd_y2 = local_dd2.min() * 100
+            
+            start_eq2 = end_eq2 # Set start for next year
+        else:
+            ret_y2, mdd_y2 = 0, 0
+            
+        # Win Rate & Count B
+        if not trades2.empty:
+            t2 = trades2[trades2['Year_Trade'] == year]
+            cnt2 = len(t2)
+            win2 = len(t2[t2['Return'] > 0])
+            wr2 = (win2 / cnt2 * 100) if cnt2 > 0 else 0
+        else: cnt2, wr2 = 0, 0
+
+        row += f" {ret_y2:6.2f}% | {mdd_y2:6.2f}% | {wr2:6.2f}% | {cnt2}회 |"
         
         yearly_lines.append(row)
 
     yearly_table = "\n".join(yearly_lines)
 
     summary = f"""
-### [마켓 필터 비교 리포트] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- **설정**: RSI {RSI_WINDOW}, SMA {SMA_WINDOW}
-- **비교**: 기존 전략 vs 마켓 필터(KOSDAQ 150 > 20일선) 적용
+### [전략 파라미터 비교] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- **비교 대상**: 
+  1. **전략 A (기존)**: RSI 3, SMA 100
+  2. **전략 B (공격)**: RSI 5, SMA 50
 
-| 구분 | 전략 1 (기존) | 전략 2 (지수필터) |
+| 구분 | 전략 A (RSI 3, SMA 100) | 전략 B (RSI 5, SMA 50) |
 | :--- | :--- | :--- |
 | **수익률** | **{ret1:.2f}%** | **{ret2:.2f}%** |
 | **MDD** | {mdd1:.2f}% | {mdd2:.2f}% |
 | **승률** | {win1:.2f}% | {win2:.2f}% |
 | **거래수** | {cnt1}회 | {cnt2}회 |
 
-#### 연도별 수익률 비교
-| 연도 | 기존 전략 | 필터 전략 |
-| :--- | :--- | :--- |
+#### 연도별 상세 비교
+| 연도 | A 수익률 | A MDD | A 승률 | A 횟수 | B 수익률 | B MDD | B 승률 | B 횟수 |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 {yearly_table}
 
 ---
