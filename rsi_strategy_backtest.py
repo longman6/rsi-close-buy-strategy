@@ -7,6 +7,7 @@ import platform
 import matplotlib.font_manager as fm
 import os
 import sys
+from datetime import datetime
 
 # ---------------------------------------------------------
 # 1. 한글 폰트 설정
@@ -47,29 +48,42 @@ TAX_RATE = 0.0020       # 0.2% (매도 시)
 SLIPPAGE_RATE = 0.001   # 0.1% (매수/매도 각각 슬리피지 지연/체결오차)
 
 # [파라미터 설정] 이곳의 값을 변경하여 테스트 가능
-RSI_WINDOW = 3          # RSI 기간
+RSI_WINDOW = 5          # RSI 기간
 BUY_THRESHOLD = 35      # 매수 기준 (RSI < 35)
 SELL_THRESHOLD = 70     # 매도 기준 (RSI > 70)
-SMA_WINDOW = 100        # 이동평균선 기간 (100일선)
+SMA_WINDOW = 50        # 이동평균선 기간 (100일선 -> 50)
 
 # ---------------------------------------------------------
 # 3. 데이터 준비
 # ---------------------------------------------------------
 def get_kosdaq150_tickers():
-    """Fetch KOSDAQ 150 tickers using PyKRX (Index Code 2203)."""
+    """Load KOSDAQ 150 tickers from local file 'kosdaq150_list.txt'."""
+    filename = 'kosdaq150_list.txt'
+    tickers = []
     try:
-        from pykrx import stock
-        print("PyKRX를 통해 코스닥 150 종목 리스트 확보 중 (지수코드: 2203)...")
-        # 2203 is KOSDAQ 150 index code in PyKRX
-        tickers = stock.get_index_portfolio_deposit_file("2203") 
+        import ast
+        if not os.path.exists(filename):
+             print(f"[오류] {filename} 파일이 없습니다. 샘플 종목을 사용합니다.")
+             return ['247540.KQ', '091990.KQ', '066970.KQ', '028300.KQ', '293490.KQ']
+
+        print(f"'{filename}'에서 종목 리스트를 읽어옵니다...")
+        with open(filename, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                if line.endswith(','): line = line[:-1]
+                try:
+                    # Parse dictionary string: {'code': '...', 'name': '...'}
+                    data = ast.literal_eval(line)
+                    tickers.append(data['code'] + '.KQ')
+                except:
+                    pass
         
-        if not tickers:
-            raise Exception("No tickers returned from PyKRX")
-            
-        # yfinance format: append .KQ
-        return [ticker + '.KQ' for ticker in tickers]
+        print(f"총 {len(tickers)}개 종목 로드 완료.")
+        return tickers
+
     except Exception as e:
-        print(f"[주의] PyKRX 오류 ({e}). 샘플 종목 사용.")
+        print(f"[주의] 파일 읽기 오류 ({e}). 샘플 종목 사용.")
         return ['247540.KQ', '091990.KQ', '066970.KQ', '028300.KQ', '293490.KQ']
 
 def calculate_rsi(data, window):
@@ -266,21 +280,87 @@ def run_backtest():
     bm_kq_equity, bm_kq_ret, bm_kq_mdd = get_benchmark_equity('229200.KS', 'KOSDAQ 150')
     bm_ks_equity, bm_ks_ret, bm_ks_mdd = get_benchmark_equity('069500.KS', 'KOSPI 200')
 
+    # ---------------------------------------------------------
+    # 5. 연도별 수익률 분석 (Yearly Breakdown)
+    # ---------------------------------------------------------
+    hist_df['Year'] = hist_df.index.year
+    years = sorted(hist_df['Year'].unique())
+    
+    yearly_md_lines = []
+    
+    for year in years:
+        year_data = hist_df[hist_df['Year'] == year]
+        if year_data.empty: continue
+        
+        # Calculate Year Start Equity
+        if year == years[0]:
+             start_eq = INITIAL_CAPITAL
+        else:
+             prev_data = hist_df[hist_df['Year'] == year - 1]
+             if not prev_data.empty:
+                 start_eq = prev_data['Equity'].iloc[-1]
+             else:
+                 start_eq = INITIAL_CAPITAL
+        
+        end_eq = year_data['Equity'].iloc[-1]
+        y_return = (end_eq / start_eq - 1) * 100
+        
+        # Calculate MDD for the year (Normalized)
+        norm_eq = year_data['Equity'] / start_eq
+        local_peak = norm_eq.cummax()
+        local_dd = (norm_eq - local_peak) / local_peak
+        y_mdd = local_dd.min() * 100
+        
+        # Calculate Win Rate & Trades
+        if not trades_df.empty:
+             # Ensure 'Year' column exists in trades_df
+             trades_df['Year_Trade'] = pd.to_datetime(trades_df['Date']).dt.year
+             y_trades = trades_df[trades_df['Year_Trade'] == year]
+             y_count = len(y_trades)
+             y_win = len(y_trades[y_trades['Return'] > 0])
+             y_win_rate = (y_win / y_count * 100) if y_count > 0 else 0
+        else:
+             y_count = 0
+             y_win_rate = 0
+             
+        row_str = f"| {year} | {y_return:6.2f}% | {y_mdd:6.2f}% | {y_win_rate:6.2f}% | {y_count}회 |"
+        yearly_md_lines.append(row_str)
+
+    yearly_table_md = "\n".join(yearly_md_lines)
+
     # 출력
-    print("\n" + "="*60)
-    print(f" [KOSDAQ 150 - 최종 최적화 전략]")
-    print(f" 설정: RSI({RSI_WINDOW}), SMA({SMA_WINDOW}), 매수<{BUY_THRESHOLD}, 매도>{SELL_THRESHOLD}")
-    print(f" 비용: 수수료 {TX_FEE_RATE*100:.3f}%, 세금 {TAX_RATE*100:.2f}%, 슬리피지 {SLIPPAGE_RATE*100:.1f}%")
-    print("-" * 60)
-    print(f" 기간: {START_DATE} ~ 현재")
-    print(f" 전략 수익률 : {final_ret:6.2f}%  (MDD: {mdd:6.2f}%)")
-    if bm_kq_equity is not None:
-        print(f" KOSDAQ 150 : {bm_kq_ret:6.2f}%  (MDD: {bm_kq_mdd:6.2f}%)")
-    if bm_ks_equity is not None:
-        print(f" KOSPI 200  : {bm_ks_ret:6.2f}%  (MDD: {bm_ks_mdd:6.2f}%)")
-    print(f" 총 거래 횟수: {len(trades_df)}회")
-    print(f" 승률       : {win_rate:6.2f}%")
-    print("="*60)
+    summary_text = f"""
+### [테스트 실행 리포트] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+- **유니버스**: 코스닥 150 ({len(tickers)}종목)
+- **기간**: {START_DATE} ~ 현재 (연도별 분석 포함)
+- **설정**: RSI({RSI_WINDOW}), SMA({SMA_WINDOW}), 매수<{BUY_THRESHOLD}, 매도>{SELL_THRESHOLD}
+- **비용**: 수수료 {TX_FEE_RATE*100:.3f}%, 세금 {TAX_RATE*100:.2f}%, 슬리피지 {SLIPPAGE_RATE*100:.1f}%
+
+#### 1. 전체 성과
+| 구분 | 전략 (RSI {RSI_WINDOW}, SMA {SMA_WINDOW}) | 벤치마크 (KOSDAQ 150) | 벤치마크 (KOSPI 200) |
+| :--- | :--- | :--- | :--- |
+| **수익률** | **{final_ret:.2f}%** | {bm_kq_ret:.2f}% | {bm_ks_ret:.2f}% |
+| **MDD** | {mdd:.2f}% | {bm_kq_mdd:.2f}% | {bm_ks_mdd:.2f}% |
+| **승률** | {win_rate:.2f}% | - | - |
+| **거래횟수** | {len(trades_df)}회 | - | - |
+
+#### 2. 연도별 성과 (Yearly Performance)
+| 연도 | 수익률 | MDD | 승률 | 거래횟수 |
+| :--- | :--- | :--- | :--- | :--- |
+{yearly_table_md}
+
+---
+"""
+    print(summary_text)
+
+    # 리포트 파일에 추가
+    report_file = "backtest_report.md"
+    try:
+        with open(report_file, "a", encoding="utf-8") as f:
+            f.write(summary_text)
+        print(f"✅ 결과가 '{report_file}'에 추가되었습니다.")
+    except Exception as e:
+        print(f"❌ 리포트 저장 실패: {e}")
 
     # 시각화
     plt.figure(figsize=(12, 7))
