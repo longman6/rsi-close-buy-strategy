@@ -133,6 +133,7 @@ def main_dashboard():
         "🧠 AI Advice", 
         "📉 Full RSI List (KOSDAQ 150)",
         "📈 Trade History",
+        "📒 Trading Journal",
         "💳 LLM Billing & Usage",
         "🔐 Change Password"
     ])
@@ -141,6 +142,8 @@ def main_dashboard():
         render_dashboard()
     elif page == "🧠 AI Advice":
         render_ai_advice_page()
+    elif page == "📒 Trading Journal":
+        render_journal_page()
     elif page == "📈 Trade History":
         render_trade_history_page()
     elif page == "📉 Full RSI List (KOSDAQ 150)":
@@ -780,6 +783,75 @@ def render_trade_history_page():
     df_display.columns = ['Date', 'Action', 'Name', 'Code', 'Price', 'Qty', 'Amount', 'P/L (%)']
     
     st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
+
+    st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
+
+def render_journal_page():
+    st.title("📒 Trading Journal")
+    st.markdown("Daily analysis logs and trade execution snapshots.")
+
+    db = DBManager()
+    
+    # 1. Fetch All Journal Entries
+    entries = db.get_all_journal_entries()
+    
+    if not entries:
+        st.info("No journal entries yet. They are created daily at market close.")
+        return
+        
+    # Convert to DF for easy handling
+    df = pd.DataFrame(entries)
+    df.sort_values(by="date", ascending=False, inplace=True)
+    
+    # Select Date
+    selected_date = st.selectbox("Select Date", df['date'].unique(), index=0)
+    
+    # Get Entry for selected date
+    entry = df[df['date'] == selected_date].iloc[0]
+    
+    # --- UI Layout ---
+    col1, col2, col3 = st.columns(3)
+    
+    col1.metric("Date", entry['date'])
+    col2.metric("Total Equity", f"{float(entry['total_balance']):,.0f} KRW")
+    
+    # P/L Color
+    pnl = float(entry['daily_profit_loss']) if entry['daily_profit_loss'] else 0.0
+    ret = float(entry['daily_return_pct']) if entry['daily_return_pct'] else 0.0
+    
+    col3.metric("Daily P/L", f"{pnl:,.0f} KRW", f"{ret:.2f}%")
+    
+    st.divider()
+    
+    c_left, c_right = st.columns([1, 1])
+    
+    with c_left:
+        st.subheader("📸 Holdings Snapshot")
+        snapshot_text = entry.get('holdings_snapshot', "No snapshot.")
+        st.text_area("End of Day Status", value=snapshot_text, height=400, disabled=True)
+        
+    with c_right:
+        st.subheader("📝 Daily Notes")
+        
+        current_note = entry.get('notes') if entry.get('notes') else ""
+        
+        with st.form(key=f"note_form_{selected_date}"):
+            new_note = st.text_area("Write your thoughts...", value=current_note, height=300)
+            submit = st.form_submit_button("Save Note")
+            
+            if submit:
+                db.update_journal_note(selected_date, new_note)
+                st.success("Note saved!")
+                time.sleep(1)
+                st.rerun()
+
+    st.divider()
+    
+    # Equity Curve
+    st.subheader("📈 Equity Curve")
+    chart_df = df.sort_values('date')
+    st.line_chart(chart_df, x="date", y="total_balance")
+
 
 if __name__ == "__main__":
     main()

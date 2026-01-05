@@ -70,6 +70,19 @@ class DBManager:
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
+
+                # Trading Journal Table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS trading_journal (
+                        date TEXT PRIMARY KEY,   -- YYYY-MM-DD
+                        total_balance REAL,      -- Total Assets (Equity)
+                        daily_profit_loss REAL,  -- Daily P/L Amount
+                        daily_return_pct REAL,   -- Daily Return %
+                        holdings_snapshot TEXT,  -- JSON or Formatted String of Holdings
+                        notes TEXT,              -- User's Manual Note
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 
                 # Migration: Add specific_model column if it doesn't exist
                 cursor.execute("PRAGMA table_info(ai_advice)")
@@ -295,3 +308,77 @@ class DBManager:
         except Exception as e:
             logging.error(f"[DB] Update Password Error: {e}")
             return False
+
+    # --- Trading Journal ---
+    def save_journal_entry(self, date: str, total_balance: float, daily_profit_loss: float, daily_return_pct: float, holdings_snapshot: str):
+        """Save or Update daily journal entry (excluding notes if exists, or keep it)."""
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                # Check if exists to preserve notes
+                cursor.execute("SELECT notes FROM trading_journal WHERE date = ?", (date,))
+                row = cursor.fetchone()
+                
+                if row:
+                    # Update fields except notes
+                    cursor.execute("""
+                        UPDATE trading_journal 
+                        SET total_balance=?, daily_profit_loss=?, daily_return_pct=?, holdings_snapshot=?
+                        WHERE date=?
+                    """, (total_balance, daily_profit_loss, daily_return_pct, holdings_snapshot, date))
+                else:
+                    # Insert new
+                    cursor.execute("""
+                        INSERT INTO trading_journal (date, total_balance, daily_profit_loss, daily_return_pct, holdings_snapshot)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (date, total_balance, daily_profit_loss, daily_return_pct, holdings_snapshot))
+                conn.commit()
+                logging.info(f"[DB] Saved Journal Entry for {date}")
+        except Exception as e:
+            logging.error(f"[DB] Save Journal Error: {e}")
+
+    def update_journal_note(self, date: str, note: str):
+        """Update the note for a specific date."""
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                # Use UPSERT logic or just Update? Better only Update if row exists?
+                # Actually user might write note before snapshot.
+                cursor.execute("SELECT 1 FROM trading_journal WHERE date = ?", (date,))
+                if cursor.fetchone():
+                    cursor.execute("UPDATE trading_journal SET notes = ? WHERE date = ?", (note, date))
+                else:
+                    # Create empty entry with note
+                    cursor.execute("INSERT INTO trading_journal (date, notes) VALUES (?, ?)", (date, note))
+                conn.commit()
+        except Exception as e:
+            logging.error(f"[DB] Update Note Error: {e}")
+
+    def get_journal_entry(self, date: str) -> Optional[Dict]:
+        """Get journal entry for a specific date."""
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM trading_journal WHERE date = ?", (date,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+        except Exception as e:
+            logging.error(f"[DB] Get Journal Error: {e}")
+        return None
+
+    def get_all_journal_entries(self) -> List[Dict]:
+        """Get all journal entries sorted by date desc."""
+        results = []
+        try:
+            with sqlite3.connect(self.db_file) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM trading_journal ORDER BY date DESC")
+                rows = cursor.fetchall()
+                for row in rows:
+                    results.append(dict(row))
+        except Exception as e:
+            logging.error(f"[DB] Get All Journals Error: {e}")
+        return results

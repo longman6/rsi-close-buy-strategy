@@ -143,8 +143,9 @@ def main():
 
             # Initial Status Display (Run once on startup)
     logging.info("📊 Checking Initial Holdings...")
+    logging.info("📊 Checking Initial Holdings...")
     try:
-        display_holdings_status(kis, telegram, strategy, trade_manager, force=True)
+        display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, force=True)
     except Exception as e:
         logging.error(f"Failed to display initial status (Network/API Error): {e}")
 
@@ -188,7 +189,8 @@ def main():
                      monitor_and_correct_orders(kis, telegram, trade_manager)
 
             # Periodic Display of Holdings (Scheduled Hourly at XX:10)
-            display_holdings_status(kis, telegram, strategy, trade_manager)
+            # Periodic Display of Holdings (Scheduled Hourly at XX:10)
+            display_holdings_status(kis, telegram, strategy, trade_manager, db_manager)
 
             # 4. 15:20 Sell Signal Check
             if not state["is_holiday"]:
@@ -434,7 +436,7 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
                      kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], rem_qty, current_price, is_cancel=False)
                      telegram.send_message(f"✏️ Modified {code} -> {current_price}")
 
-def display_holdings_status(kis, telegram, strategy, trade_manager, force=False):
+def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, force=False):
     """
     Schedule: 
       - Console Log: Every minute (approx)
@@ -513,7 +515,7 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, force=False)
         
         days_held = trade_manager.get_holding_days(code)
         
-        line = f"🔹 {name}: {curr:,.0f} (RSI: {rsi_val:.2f}) | P/L: {profit_pct:.2f}% ({days_held}d)"
+        line = f"🔹 {name}: {curr:,.0f} (RSI: {rsi_val:.2f}) | P/L: {profit_pct:.2f}% ({days_held}d) | ₩{int(profit_amt):,}"
         
         msg_lines.append(line)
         
@@ -525,6 +527,23 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, force=False)
     if should_send_telegram:
         full_msg = "\n".join(msg_lines)
         telegram.send_message(full_msg)
+        
+        # Save to Trading Journal (Overwrite daily to keep latest)
+        try:
+             # Map KIS Totals to Journal
+             # Note: 'daily_profit_loss' here will store TOTAL P/L because KIS gives Total.
+             # 'daily_return_pct' stores Total Return %.
+             # This is acceptable for a snapshot.
+             
+             db_manager.save_journal_entry(
+                 date=now.strftime("%Y-%m-%d"),
+                 total_balance=balance['total_asset'],
+                 daily_profit_loss=balance['total_pnl'],
+                 daily_return_pct=balance['total_return_rate'],
+                 holdings_snapshot=full_msg
+             )
+        except Exception as e:
+             logging.error(f"Failed to save journal entry: {e}")
 
 def run_sell_check(kis, telegram, strategy, trade_manager):
     """15:20 Sell Check"""
