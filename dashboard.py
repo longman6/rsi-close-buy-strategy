@@ -772,18 +772,39 @@ def render_trade_history_page():
         lambda x: f"<span style='font-weight:bold; color:{'blue' if x == 'BUY' else 'red'}'>{x}</span>"
     )
     
-    # P/L for display
+    # Calculate P/L Amount (Approximate from Sell Total and PnL %)
+    def calc_pnl_amt(row):
+        if row['action'] == 'SELL' and row['amount'] > 0 and row['pnl_pct'] != 0:
+            # Formula: Profit = Sell_Amt - Buy_Amt
+            # Sell_Amt = Buy_Amt * (1 + r/100) => Buy_Amt = Sell_Amt / (1 + r/100)
+            # Profit = Sell_Amt * (r/100) / (1 + r/100)
+            # Or simply: amount * pnl / (100 + pnl)
+            
+            # Handle extreme case where pnl is -100% (denominator 0)?
+            if row['pnl_pct'] == -100: return -row['amount'] # Lost everything (technically Sell amt would be 0 though)
+            
+            pnl_amt = row['amount'] * row['pnl_pct'] / (100 + row['pnl_pct'])
+            return pnl_amt
+        return 0
+
+    df_display['pnl_amt'] = df_display.apply(calc_pnl_amt, axis=1)
+
+    # P/L (Amount) Display
+    df_display['P/L (₩)'] = df_display.apply(
+        lambda row: f"<span style='color:{'red' if row['pnl_amt'] > 0 else 'blue'}'>{int(row['pnl_amt']):,}</span>" if row['action'] == 'SELL' else "",
+        axis=1
+    )
+
+    # P/L (%) for display
     df_display['P/L (%)'] = df_display.apply(
         lambda row: f"<span style='color:{'red' if row['pnl_pct'] > 0 else 'blue'}'>{row['pnl_pct']:.2f}%</span>" if row['action'] == 'SELL' else "",
         axis=1
     )
     
     # Select and order columns
-    df_display = df_display[['date', 'Action', 'Name', 'code', 'Price', 'quantity', 'Amount', 'P/L (%)']]
-    df_display.columns = ['Date', 'Action', 'Name', 'Code', 'Price', 'Qty', 'Amount', 'P/L (%)']
+    df_display = df_display[['date', 'Action', 'Name', 'code', 'Price', 'quantity', 'Amount', 'P/L (%)', 'P/L (₩)']]
+    df_display.columns = ['Date', 'Action', 'Name', 'Code', 'Price', 'Qty', 'Amount', 'P/L (%)', 'P/L (₩)']
     
-    st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
-
     st.write(df_display.to_html(escape=False), unsafe_allow_html=True)
 
 def render_journal_page():
