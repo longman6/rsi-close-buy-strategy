@@ -18,7 +18,7 @@ import ast
 
 # Setup Logging for Cron
 # We will log to a file in the project directory
-log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'daily_analysis.log')
+log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs', 'daily_analysis.log')
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +52,7 @@ def get_kosdaq150_universe():
         logging.error(f"PyKRX Universe Fetch Error: {e}")
         
         # Fallback: Read from local file 'kosdaq150_list.txt'
-        fallback_file = "kosdaq150_list.txt"
+        fallback_file = "data/kosdaq150_list.txt"
         if os.path.exists(fallback_file):
             logging.info(f"📂 Loading universe from {fallback_file}...")
             universe = []

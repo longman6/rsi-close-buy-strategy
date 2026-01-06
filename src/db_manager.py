@@ -3,7 +3,7 @@ import datetime
 import logging
 from typing import List, Dict, Optional
 
-DB_FILE = "stock_analysis.db"
+DB_FILE = "data/stock_analysis.db"
 
 class DBManager:
     def __init__(self, db_file=DB_FILE):

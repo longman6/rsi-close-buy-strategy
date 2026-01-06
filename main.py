@@ -25,7 +25,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler("trade_log.txt", encoding='utf-8'),
+        logging.FileHandler("logs/trade_log.txt", encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -47,7 +47,7 @@ state = {
 
 def load_exclusion_list(kis=None):
     """Load excluded stock codes from file and optionally log names"""
-    exclude_file = "exclude_list.txt"
+    exclude_file = "data/exclude_list.txt"
     excluded = set()
     if os.path.exists(exclude_file):
         try:
@@ -118,11 +118,11 @@ def main():
     strategy = Strategy()
     
     # 0. Initialize Trade Manager & Parse Logs (Startup)
-    if not os.path.exists("trade_history.json"):
+    if not os.path.exists("data/trade_history.json"):
         logging.info("📜 trade_history.json not found. Parsing local trade logs...")
         parse_trade_log.parse_log()
     else:
-        logging.info("📜 trade_history.json found. Loading existing history.")
+        logging.info("📜 data/trade_history.json found. Loading existing history.")
     db_manager = DBManager()
     trade_manager = TradeManager(db=db_manager)
 

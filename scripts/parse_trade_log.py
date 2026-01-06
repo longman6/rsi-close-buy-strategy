@@ -3,8 +3,8 @@ import json
 import os
 import datetime
 
-LOG_FILE = "../trade_log.txt"
-HISTORY_FILE = "../trade_history.json"
+LOG_FILE = "logs/trade_log.txt"
+HISTORY_FILE = "data/trade_history.json"
 
 def parse_log():
     if not os.path.exists(LOG_FILE):

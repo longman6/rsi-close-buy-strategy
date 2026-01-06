@@ -10,6 +10,6 @@ source .venv/bin/activate
 # You can pass arguments to this script to be passed to streamlit
 # e.g., ./run_dashboard.sh --server.port 8502
 echo "🚀 Starting RSI Power Zone Dashboard in BACKGROUND..."
-nohup streamlit run dashboard.py "$@" > dashboard.log 2>&1 &
-echo "✅ Dashboard is running in the background. Logs: dashboard.log"
+nohup streamlit run dashboard.py "$@" > logs/dashboard.log 2>&1 &
+echo "✅ Dashboard is running in the background. Logs: logs/dashboard.log"
 echo "👉 PID: $!"

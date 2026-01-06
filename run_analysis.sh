@@ -8,6 +8,6 @@ source .venv/bin/activate
 
 # Execute the analysis script
 # Appending output to a specific log file for cron debugging
-echo "Starting Analysis at $(date)" >> cron_analyze.log
-python3 analyze_kosdaq150.py >> cron_analyze.log 2>&1
-echo "Finished Analysis at $(date)" >> cron_analyze.log
+echo "Starting Analysis at $(date)" >> logs/cron_analyze.log
+python3 analyze_kosdaq150.py >> logs/cron_analyze.log 2>&1
+echo "Finished Analysis at $(date)" >> logs/cron_analyze.log

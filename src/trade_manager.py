@@ -5,7 +5,7 @@ import pytz
 from datetime import datetime
 import config
 
-HISTORY_FILE = "trade_history.json"
+HISTORY_FILE = "data/trade_history.json"
 
 class TradeManager:
     def __init__(self, db=None):
