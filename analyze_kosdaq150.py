@@ -158,9 +158,9 @@ def analyze_kosdaq150():
                 close_val = float(latest.get('Close', 0))
                 
                 # 3. AI Advice Logic
-                # Query if RSI <= 20 (User Request)
-                if rsi_val is not None and rsi_val <= 20:
-                     logging.info(f"👀 Low RSI Candidate (<=20): {name}({code}) RSI={rsi_val:.2f}")
+                # Query if RSI <= 30 (User Request)
+                if rsi_val is not None and rsi_val <= 30:
+                     logging.info(f"👀 Low RSI Candidate (<=30): {name}({code}) RSI={rsi_val:.2f}")
                      
                      # Check Danger before spending tokens
                      is_danger, reason = kis.check_dangerous_stock(code)
