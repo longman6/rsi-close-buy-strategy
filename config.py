@@ -40,3 +40,7 @@ TIME_PRE_ORDER = os.getenv("TIME_PRE_ORDER", "08:57")
 TIME_ORDER_CHECK = os.getenv("TIME_ORDER_CHECK", "09:05")
 TIME_SELL_CHECK = os.getenv("TIME_SELL_CHECK", "15:20")
 TIME_SELL_EXEC = os.getenv("TIME_SELL_EXEC", "15:26")
+
+# Split Buy Order Settings
+FIRST_ORDER_RATIO = float(os.getenv("FIRST_ORDER_RATIO", 0.5))  # Default 50%
+SECOND_ORDER_TIME = os.getenv("SECOND_ORDER_TIME", "09:30")

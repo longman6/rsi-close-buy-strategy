@@ -34,6 +34,7 @@ logging.basicConfig(
 state = {
     "analysis_done": False,
     "pre_order_done": False,
+    "second_order_done": False,  # 2차 주문 완료 플래그
     "buy_verified": False,
     "sell_check_done": False,
     "sell_exec_done": False,
@@ -92,6 +93,7 @@ def reset_daily_state(kis):
         logging.info("🔄 Resetting Daily State...")
         state["analysis_done"] = False
         state["pre_order_done"] = False
+        state["second_order_done"] = False
         state["buy_verified"] = False
         state["sell_check_done"] = False
         state["sell_exec_done"] = False
@@ -170,7 +172,7 @@ def main():
                     logging.info(f"⏭️ [Skip] Morning Analysis window passed ({current_time}).")
                     state["analysis_done"] = True
 
-            # 2. 08:57 Pre-Market Order
+            # 2. 08:57 Pre-Market Order (1차 주문)
             # Window: 08:57 ~ 09:10
             if not state["is_holiday"]:
                 if current_time >= config.TIME_PRE_ORDER and current_time <= "09:10":
@@ -181,7 +183,17 @@ def main():
                     # If started late, skip pre-order
                     logging.info(f"⏭️ [Skip] Pre-Order window passed ({current_time}).")
                     state["pre_order_done"] = True
-                
+
+            # 2.5. 09:30 Second Order (2차 주문)
+            if not state["is_holiday"]:
+                if current_time >= config.SECOND_ORDER_TIME and not state["second_order_done"]:
+                    if state["pre_order_done"]:  # Only if first order was placed
+                        run_second_order(kis, telegram, trade_manager)
+                        state["second_order_done"] = True
+                    else:
+                        logging.warning("⚠️  Skipping second order: First order not completed")
+                        state["second_order_done"] = True  # Mark as done to prevent retrying
+
             # 3. 09:05 ~ Order Verification & Correction Loop
             # This runs repeatedly every minute starting from 09:05 until ... say 15:00?
             if not state["is_holiday"]:
@@ -317,10 +329,11 @@ def run_morning_analysis(kis, telegram, strategy, trade_manager):
     telegram.send_message(msg)
 
 def run_pre_order(kis, telegram, trade_manager):
-    """08:57: Place Limit Order"""
-    logging.info("⏰ [08:57] Placing Pre-Orders...")
-    telegram.send_message("⏰ [08:57] Placing Pre-Orders")
-    
+    """08:57: Place First Stage Orders (50% of BUY_AMOUNT_KRW by default)"""
+    first_order_ratio = config.FIRST_ORDER_RATIO
+    logging.info(f"⏰ [08:57] Placing 1차 주문 ({int(first_order_ratio*100)}%)...")
+    telegram.send_message(f"⏰ [08:57] 1차 주문 시작 (전체의 {int(first_order_ratio*100)}%)")
+
     if not state["buy_targets"]:
         logging.info("No targets to buy.")
         return
@@ -332,13 +345,14 @@ def run_pre_order(kis, telegram, trade_manager):
 
     # Use Fixed Amount from Config
     amt_per_stock_config = config.BUY_AMOUNT_KRW
-    
+    amt_per_stock_first = int(amt_per_stock_config * first_order_ratio)
+
     current_cash = cash
-    
+
     # Check if we have enough cash (Warning)
-    total_needed = amt_per_stock_config * count
+    total_needed = amt_per_stock_first * count
     if total_needed > current_cash:
-        msg = f"⚠️ 예수금 부족 예측! 필요: {total_needed:,.0f}원, 보유: {current_cash:,.0f}원. 주문 금액을 자동으로 조정합니다."
+        msg = f"⚠️ 1차 주문 예수금 부족 예측! 필요: {total_needed:,.0f}원, 보유: {current_cash:,.0f}원. 주문 금액을 자동으로 조정합니다."
         logging.warning(msg)
         telegram.send_message(msg) 
 
@@ -360,34 +374,150 @@ def run_pre_order(kis, telegram, trade_manager):
         limit_price = int(base_price * 1.015) 
         limit_price = kis.get_valid_price(limit_price)
         
-        # Check Cash for this Order
-        amt_to_use = amt_per_stock_config
+        # Check Cash for this Order (First Stage Amount)
+        amt_to_use = amt_per_stock_first
         if current_cash < amt_to_use:
             amt_to_use = current_cash
             if amt_to_use < limit_price:
-                telegram.send_message(f"❌ Skipping {code}: 예수금 절대 부족 ({int(amt_to_use):,}원)")
+                telegram.send_message(f"❌ Skipping {code}: 1차 주문 예수금 절대 부족 ({int(amt_to_use):,}원)")
                 continue
-            logging.warning(f"📉 {code}: 예수금 부족으로 주문 금액 조정 ({amt_per_stock_config:,} -> {int(amt_to_use):,}원)")
+            logging.warning(f"📉 {code}: 예수금 부족으로 1차 주문 금액 조정 ({amt_per_stock_first:,} -> {int(amt_to_use):,}원)")
 
         qty = int(amt_to_use / limit_price)
         if qty < 1: continue
-        
-        target['target_qty'] = qty # Update state
-        
-        # Place Order
+
+        # Store first order quantity separately
+        target['first_order_qty'] = qty
+        target['target_qty'] = qty  # Keep for compatibility
+
+        # Place First Order
         success, msg = kis.send_order(code, qty, side="buy", price=limit_price, order_type="00")
         if success:
-            telegram.send_message(f"🚀 Pre-Order: {code} {qty}ea @ {limit_price}")
+            telegram.send_message(
+                f"🛒 1차 주문 완료\n"
+                f"종목: {target['name']} ({code})\n"
+                f"수량: {qty}주\n"
+                f"가격: {limit_price:,}원\n"
+                f"금액: {qty*limit_price:,}원 (전체의 {int(first_order_ratio*100)}%)"
+            )
             # Update History (Assume filled later)
             trade_manager.update_buy(code, target['name'], get_now_kst().strftime("%Y%m%d"), limit_price, qty)
-            
+
             # Update Local Cash Estimate (Approximate)
             order_amt = limit_price * qty
             current_cash -= order_amt
         else:
-            telegram.send_message(f"❌ Pre-Order Failed {code}: {msg}")
+            telegram.send_message(f"❌ 1차 주문 실패 {code}: {msg}")
             
         time.sleep(0.2)
+
+def run_second_order(kis, telegram, trade_manager):
+    """09:30: Place Second Stage Orders (remaining 50% at market open)"""
+    if not state["buy_targets"]:
+        logging.info("⏭️  No buy targets for second order")
+        return
+
+    first_order_ratio = config.FIRST_ORDER_RATIO
+    second_order_ratio = 1.0 - first_order_ratio
+
+    logging.info(f"🛒 Starting 2차 주문 ({int(second_order_ratio*100)}%) at {config.SECOND_ORDER_TIME}...")
+    telegram.send_message(f"⏰ [{config.SECOND_ORDER_TIME}] 2차 주문 시작 (나머지 {int(second_order_ratio*100)}%)")
+
+    # Get current balance
+    balance = kis.get_balance()
+    if not balance:
+        logging.error("❌ Failed to fetch balance for second order")
+        telegram.send_message("❌ 2차 주문 실패: 잔고 조회 불가")
+        return
+
+    current_cash = balance.get('cash_available', 0)
+    logging.info(f"💰 Available Cash: {current_cash:,} KRW")
+
+    amt_per_stock_config = config.BUY_AMOUNT_KRW
+    amt_per_stock_second = int(amt_per_stock_config * second_order_ratio)
+
+    for target in state["buy_targets"]:
+        code = target['code']
+
+        # Check if first order was placed
+        if 'first_order_qty' not in target:
+            logging.warning(f"⚠️  {code}: No first order found, skipping second order")
+            continue
+
+        # Fetch current price
+        curr = kis.get_current_price(code)
+        if not curr:
+            logging.warning(f"⚠️  {code}: Failed to get current price")
+            telegram.send_message(f"⚠️ {code} 2차 주문 실패: 현재가 조회 불가")
+            continue
+
+        current_price = float(curr.get('stck_prpr', 0))
+        if current_price == 0:
+            logging.warning(f"⚠️  {code}: Invalid current price")
+            continue
+
+        # Use current market price for second order
+        limit_price = kis.get_valid_price(int(current_price))
+
+        # Check if price has risen too much (>5% from yesterday)
+        yesterday_close = target['close_yesterday']
+        if current_price > yesterday_close * 1.05:
+            pct_change = ((current_price / yesterday_close - 1) * 100)
+            logging.info(f"🚫 Skipping {code} second order: Price rose >5% ({current_price:,} > {yesterday_close*1.05:,.0f})")
+            telegram.send_message(
+                f"🚫 2차 주문 취소\n"
+                f"종목: {target['name']} ({code})\n"
+                f"사유: 급등 (+{pct_change:.1f}%)\n"
+                f"현재가: {int(current_price):,}원"
+            )
+            continue
+
+        # Calculate second order amount
+        amt_to_use = amt_per_stock_second
+        if current_cash < amt_to_use:
+            amt_to_use = current_cash
+            if amt_to_use < limit_price:
+                logging.warning(f"⚠️  {code}: Insufficient cash for second order")
+                telegram.send_message(f"❌ {code} 2차 주문 불가: 예수금 부족 ({int(amt_to_use):,}원)")
+                continue
+            logging.warning(f"📉 {code}: 예수금 부족으로 2차 주문 금액 조정 ({amt_per_stock_second:,} -> {int(amt_to_use):,}원)")
+
+        qty = int(amt_to_use / limit_price)
+        if qty < 1:
+            logging.warning(f"⚠️  {code}: Second order qty < 1")
+            continue
+
+        # Place second order
+        time.sleep(0.2)
+        success, msg = kis.send_order(code, qty, side="buy", price=limit_price, order_type="00")
+
+        if success:
+            target['second_order_qty'] = qty
+            target['target_qty'] = target.get('first_order_qty', 0) + qty  # Update total
+
+            telegram.send_message(
+                f"🛒 2차 주문 완료\n"
+                f"종목: {target['name']} ({code})\n"
+                f"수량: {qty}주\n"
+                f"가격: {limit_price:,}원\n"
+                f"금액: {qty*limit_price:,}원\n"
+                f"총 주문: {target['target_qty']}주 (1차 {target.get('first_order_qty', 0)} + 2차 {qty})"
+            )
+
+            # Update trade manager
+            trade_manager.update_buy(code, target['name'],
+                                    get_now_kst().strftime("%Y%m%d"),
+                                    limit_price, qty)
+
+            current_cash -= (qty * limit_price)
+            logging.info(f"✅ Second Order: {code} {qty}ea @ {limit_price:,} | Cash Left: {current_cash:,}")
+        else:
+            logging.error(f"❌ Second Order Failed: {code} - {msg}")
+            telegram.send_message(f"❌ 2차 주문 실패: {code}\n사유: {msg}")
+
+    state["second_order_done"] = True
+    logging.info("✅ 2차 주문 완료")
+    telegram.send_message("✅ 2차 주문 완료")
 
 last_monitor_time = 0
 last_display_time = 0
