@@ -325,18 +325,30 @@ def render_dashboard():
             pnl_pct = float(h['evlu_pfls_rt']) # KIS gives this
             pnl_amt = float(h['evlu_pfls_amt']) 
             
-            # RSI Calculation
+            # RSI Calculation & Day Change
             df = kis.get_daily_ohlcv(code)
             rsi = 0.0
+            day_change_pct = 0.0
+
             if not df.empty:
                 df = strategy.calculate_indicators(df)
                 if 'RSI' in df.columns:
                     rsi = df['RSI'].iloc[-1]
-            
+
+                # Calculate day change (전일 대비 등락율)
+                if len(df) >= 2:
+                    yesterday_close = df['Close'].iloc[-2]
+                    today_price = curr
+                    if yesterday_close > 0:
+                        day_change_pct = ((today_price - yesterday_close) / yesterday_close) * 100
+
             # Naver Link
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             link_html = f"<a href='{url}' target='_blank'>{name}</a>"
-            
+
+            # Color for day change
+            day_change_color = "🔴" if day_change_pct > 0 else "🔵" if day_change_pct < 0 else "⚪"
+
             holdings_data.append({
                 "Name": link_html,
                 "Code": code,
@@ -344,6 +356,7 @@ def render_dashboard():
                 "Avg Price": f"{avg:,.0f}",
                 "Qty": qty,
                 "RSI": f"{rsi:.2f}",
+                "Day Chg": f"{day_change_color} {day_change_pct:+.2f}%",
                 "P/L (%)": f"{pnl_pct:.2f}%",
                 "P/L (₩)": f"{pnl_amt:,.0f}"
             })
