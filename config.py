@@ -44,3 +44,12 @@ TIME_SELL_EXEC = os.getenv("TIME_SELL_EXEC", "15:26")
 # Split Buy Order Settings
 FIRST_ORDER_RATIO = float(os.getenv("FIRST_ORDER_RATIO", 0.5))  # Default 50%
 SECOND_ORDER_TIME = os.getenv("SECOND_ORDER_TIME", "09:30")
+
+# Price Strategy Settings
+FIRST_ORDER_PREMIUM = float(os.getenv("FIRST_ORDER_PREMIUM", 0.003))  # Default +0.3%
+SECOND_ORDER_DISCOUNT = float(os.getenv("SECOND_ORDER_DISCOUNT", 0.005))  # Default -0.5%
+
+# Gradual Price Increase Settings
+PRICE_INCREMENT_STEP = float(os.getenv("PRICE_INCREMENT_STEP", 0.002))  # +0.2% per step
+PRICE_INCREMENT_INTERVAL = int(os.getenv("PRICE_INCREMENT_INTERVAL", 300))  # 5 minutes
+MAX_PRICE_INCREASE = float(os.getenv("MAX_PRICE_INCREASE", 0.02))  # Max +2%

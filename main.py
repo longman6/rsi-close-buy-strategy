@@ -329,10 +329,11 @@ def run_morning_analysis(kis, telegram, strategy, trade_manager):
     telegram.send_message(msg)
 
 def run_pre_order(kis, telegram, trade_manager):
-    """08:57: Place First Stage Orders (50% of BUY_AMOUNT_KRW by default)"""
+    """08:57: Place First Stage Orders with lower premium (+0.3%)"""
     first_order_ratio = config.FIRST_ORDER_RATIO
-    logging.info(f"⏰ [08:57] Placing 1차 주문 ({int(first_order_ratio*100)}%)...")
-    telegram.send_message(f"⏰ [08:57] 1차 주문 시작 (전체의 {int(first_order_ratio*100)}%)")
+    first_order_premium = config.FIRST_ORDER_PREMIUM
+    logging.info(f"⏰ [08:57] 1차 주문 ({int(first_order_ratio*100)}%, +{first_order_premium*100:.1f}% 프리미엄)...")
+    telegram.send_message(f"⏰ [08:57] 1차 주문 시작 (전체의 {int(first_order_ratio*100)}%, 낮은 가격 전략)")
 
     if not state["buy_targets"]:
         logging.info("No targets to buy.")
@@ -369,10 +370,14 @@ def run_pre_order(kis, telegram, trade_manager):
             base_price = float(curr['antc_cnpr'])
         else:
             base_price = target['close_yesterday']
-            
-        # +1.5% as proxy for 5 ticks
-        limit_price = int(base_price * 1.015) 
+
+        # Apply lower premium (+0.3% instead of +1.5%)
+        limit_price = int(base_price * (1 + first_order_premium))
         limit_price = kis.get_valid_price(limit_price)
+
+        # Store initial order price and time for gradual price increase monitoring
+        target['initial_order_price'] = limit_price
+        target['initial_order_time'] = time.time()
         
         # Check Cash for this Order (First Stage Amount)
         amt_to_use = amt_per_stock_first
@@ -394,11 +399,12 @@ def run_pre_order(kis, telegram, trade_manager):
         success, msg = kis.send_order(code, qty, side="buy", price=limit_price, order_type="00")
         if success:
             telegram.send_message(
-                f"🛒 1차 주문 완료\n"
+                f"🛒 1차 주문 완료 (낮은 가격 전략)\n"
                 f"종목: {target['name']} ({code})\n"
                 f"수량: {qty}주\n"
-                f"가격: {limit_price:,}원\n"
-                f"금액: {qty*limit_price:,}원 (전체의 {int(first_order_ratio*100)}%)"
+                f"가격: {limit_price:,}원 (+{first_order_premium*100:.1f}%)\n"
+                f"기준가: {int(base_price):,}원\n"
+                f"금액: {qty*limit_price:,}원"
             )
             # Update History (Assume filled later)
             trade_manager.update_buy(code, target['name'], get_now_kst().strftime("%Y%m%d"), limit_price, qty)
@@ -412,16 +418,17 @@ def run_pre_order(kis, telegram, trade_manager):
         time.sleep(0.2)
 
 def run_second_order(kis, telegram, trade_manager):
-    """09:30: Place Second Stage Orders (remaining 50% at market open)"""
+    """09:30: Place Second Stage Orders with discount (-0.5%)"""
     if not state["buy_targets"]:
         logging.info("⏭️  No buy targets for second order")
         return
 
     first_order_ratio = config.FIRST_ORDER_RATIO
     second_order_ratio = 1.0 - first_order_ratio
+    second_order_discount = config.SECOND_ORDER_DISCOUNT
 
-    logging.info(f"🛒 Starting 2차 주문 ({int(second_order_ratio*100)}%) at {config.SECOND_ORDER_TIME}...")
-    telegram.send_message(f"⏰ [{config.SECOND_ORDER_TIME}] 2차 주문 시작 (나머지 {int(second_order_ratio*100)}%)")
+    logging.info(f"🛒 2차 주문 ({int(second_order_ratio*100)}%, -{second_order_discount*100:.1f}% 할인)...")
+    telegram.send_message(f"⏰ [{config.SECOND_ORDER_TIME}] 2차 주문 시작 (나머지 {int(second_order_ratio*100)}%, 할인 전략)")
 
     # Get current balance
     balance = kis.get_balance()
@@ -456,8 +463,13 @@ def run_second_order(kis, telegram, trade_manager):
             logging.warning(f"⚠️  {code}: Invalid current price")
             continue
 
-        # Use current market price for second order
-        limit_price = kis.get_valid_price(int(current_price))
+        # Apply discount (-0.5%)
+        discounted_price = int(current_price * (1 - second_order_discount))
+        limit_price = kis.get_valid_price(discounted_price)
+
+        # Store initial order price and time for gradual price increase monitoring
+        target['second_order_initial_price'] = limit_price
+        target['second_order_time'] = time.time()
 
         # Check if price has risen too much (>5% from yesterday)
         yesterday_close = target['close_yesterday']
@@ -496,11 +508,11 @@ def run_second_order(kis, telegram, trade_manager):
             target['target_qty'] = target.get('first_order_qty', 0) + qty  # Update total
 
             telegram.send_message(
-                f"🛒 2차 주문 완료\n"
+                f"🛒 2차 주문 완료 (할인 전략)\n"
                 f"종목: {target['name']} ({code})\n"
                 f"수량: {qty}주\n"
-                f"가격: {limit_price:,}원\n"
-                f"금액: {qty*limit_price:,}원\n"
+                f"가격: {limit_price:,}원 (현재가 대비 -{second_order_discount*100:.1f}%)\n"
+                f"현재가: {int(current_price):,}원\n"
                 f"총 주문: {target['target_qty']}주 (1차 {target.get('first_order_qty', 0)} + 2차 {qty})"
             )
 
@@ -524,47 +536,96 @@ last_display_time = 0
 
 def monitor_and_correct_orders(kis, telegram, trade_manager):
     """
-    09:05 ~ Loop: Check Unfilled.
+    Monitor and gradually increase unfilled order prices.
+    Runs every 60 seconds.
     """
     global last_monitor_time
-    if time.time() - last_monitor_time < 60:
-         return # Run every 1 min
-    
-    last_monitor_time = time.time()
-    
+    now = time.time()
+
+    if now - last_monitor_time < 60:
+        return  # Run every 1 min
+
+    last_monitor_time = now
+
     orders = kis.get_outstanding_orders()
-    if not orders: return 
-    
+    if not orders:
+        return
+
+    # Load price strategy settings
+    increment_step = config.PRICE_INCREMENT_STEP  # +0.2%
+    increment_interval = config.PRICE_INCREMENT_INTERVAL  # 300 seconds (5 min)
+    max_increase = config.MAX_PRICE_INCREASE  # +2%
+
     for ord in orders:
-        # Check if this is OUR buy order
         code = ord['pdno']
-        
+
         # Find matching target in state
         target = next((t for t in state["buy_targets"] if t['code'] == code), None)
-        if not target: continue # Not our managed target
-        
+        if not target:
+            continue  # Not our managed target
+
         # Check current price
         curr = kis.get_current_price(code)
-        if not curr: continue
-        
+        if not curr:
+            continue
+
         current_price = float(curr['stck_prpr'])
         yesterday_close = target['close_yesterday']
-        
-        # Condition: If Current > Yesterday + 5% -> Cancel
+
+        # Cancel if price surged >5%
         if current_price > yesterday_close * 1.05:
             logging.info(f"🚫 {code} rose too much (>5%). Cancelling...")
             kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], 0, 0, is_cancel=True)
             telegram.send_message(f"🗑️ Cancelled {code}: Price > +5%")
-        else:
-            # Modify to Current Price (Chase)
-            order_price = float(ord['ord_unpr'])
-            if order_price != current_price:
-                 logging.info(f"✏️ Correcting {code} to Current Price {current_price}")
-                 # Use Remainder Qty
-                 rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
-                 if rem_qty > 0:
-                     kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], rem_qty, current_price, is_cancel=False)
-                     telegram.send_message(f"✏️ Modified {code} -> {current_price}")
+            continue
+
+        # Gradual price increase logic
+        order_price = float(ord['ord_unpr'])
+
+        # Determine which order this is (1st or 2nd)
+        initial_price = target.get('initial_order_price')
+        order_time = target.get('initial_order_time')
+
+        # If this is a second order, use second order initial price
+        if 'second_order_initial_price' in target:
+            # Check if this order matches second order price
+            second_initial = target['second_order_initial_price']
+            second_time = target.get('second_order_time')
+            if abs(order_price - second_initial) < abs(order_price - initial_price):
+                initial_price = second_initial
+                order_time = second_time
+
+        if not initial_price or not order_time:
+            # Fallback to old logic: revise to current price
+            rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
+            if rem_qty > 0 and order_price != current_price:
+                kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'],
+                                       rem_qty, int(current_price), is_cancel=False)
+                telegram.send_message(f"✏️ Modified {code} -> {int(current_price):,}")
+            continue
+
+        # Calculate how many intervals have passed
+        elapsed_time = now - order_time
+        intervals_passed = int(elapsed_time / increment_interval)
+
+        # Calculate target price based on intervals
+        price_increase_pct = min(intervals_passed * increment_step, max_increase)
+        target_price = int(initial_price * (1 + price_increase_pct))
+        target_price = kis.get_valid_price(target_price)
+
+        # Don't exceed current market price
+        target_price = min(target_price, int(current_price))
+
+        # Only revise if different from current order price
+        rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
+        if rem_qty > 0 and target_price != order_price:
+            logging.info(
+                f"📈 Gradual increase {code}: "
+                f"{int(order_price):,} → {target_price:,} "
+                f"(+{price_increase_pct*100:.1f}%, interval {intervals_passed})"
+            )
+            kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'],
+                                   rem_qty, target_price, is_cancel=False)
 
 def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, force=False):
     """
