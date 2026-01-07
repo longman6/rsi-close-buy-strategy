@@ -1,0 +1,12 @@
+최적화 일시: 2026-01-07 14:19:48
+분석 기간: 2005-01-01 ~ 2025-12-31
+총 trials: 2500
+최고 수익률: 32569.05%
+
+최적 파라미터:
+  rsi_window = 3
+  sma_window = 95
+  buy_threshold = 39
+  sell_threshold = 60
+  max_holding_days = 39
+  loss_cooldown_days = 75
