@@ -681,11 +681,11 @@ def render_full_rsi_page():
 
         # Summary Metrics
         total_stocks = len(df)
-        candidates = len(df[df['rsi'] < 35])
+        candidates = len(df[df['rsi'] < config.RSI_BUY_THRESHOLD])
         
         c1, c2 = st.columns(2)
         c1.metric("Total Analyzed", total_stocks)
-        c2.metric("Low RSI (<35)", candidates)
+        c2.metric(f"Low RSI (<{config.RSI_BUY_THRESHOLD})", candidates)
         
         st.divider()
         
@@ -701,10 +701,11 @@ def render_full_rsi_page():
 
         df['close_fmt'] = df['close_price'].map(safe_fmt_close)
         df['sma_fmt'] = df.apply(lambda row: f"{safe_fmt_close(row.get('sma', 0))} {'(✅)' if row.get('is_above_sma') else '(❌)'}", axis=1)
+        df['low_rsi_fmt'] = df.apply(lambda row: "✅" if row.get('is_low_rsi') else "", axis=1)
 
         # Display Columns
-        df_display = df[['code', 'name', 'rsi_fmt', 'close_fmt', 'sma_fmt', 'AI Rec']].copy()
-        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Close', 'SMA(50)', 'Consensus']
+        df_display = df[['code', 'name', 'rsi_fmt', 'low_rsi_fmt', 'close_fmt', 'sma_fmt', 'AI Rec']].copy()
+        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Low RSI', 'Close', 'SMA(50)', 'Consensus']
         
         # Naver Link
         df_display['Name'] = df_display.apply(

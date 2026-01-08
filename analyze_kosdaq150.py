@@ -162,17 +162,31 @@ def analyze_kosdaq150():
                 if sma_val is not None and close_val > sma_val:
                     is_above_sma = True
 
+                # Calculate is_low_rsi
+                rsi_threshold = config.RSI_BUY_THRESHOLD
+                is_low_rsi = False
+                if rsi_val is not None and rsi_val < rsi_threshold:
+                    is_low_rsi = True
+
                 # 3. AI Advice Logic
-                # Query if RSI <= 30 (User Request)
-                if rsi_val is not None and rsi_val <= 30:
+                # Query if RSI < Threshold AND Price > SMA
+                
+                # DB Storage Condition: Any Low RSI (for logging/dashboard visibility)
+                # But AI Cost Saving: Only high quality setups
+                
+                if is_low_rsi:
                      sma_status = "✅Above SMA" if is_above_sma else "❌Below SMA"
-                     logging.info(f"👀 Low RSI Candidate (<=30): {name}({code}) RSI={rsi_val:.2f} | {sma_status}")
+                     logging.info(f"👀 Low RSI Candidate (<{rsi_threshold}): {name}({code}) RSI={rsi_val:.2f} | {sma_status}")
                      
-                     # Check Danger before spending tokens
+                     # Check Danger
                      is_danger, reason = kis.check_dangerous_stock(code)
                      if is_danger:
                          logging.info(f"🚫 Removing Dangerous Candidate {code}: {reason}")
-                         # Cleanly skipping AI calls
+                     
+                     # Only query AI if Above SMA (User Request)
+                     elif not is_above_sma:
+                         logging.info(f"📉 Skipping AI Query for {name}: Below SMA")
+                         
                      else:
                          # Prepare OHLCV Text (Last 30 days)
                          recent_df = df.tail(30)
@@ -193,7 +207,7 @@ def analyze_kosdaq150():
                              db.save_ai_advice(today_str, code, model, rec, reasoning, specific_model, prompt)
                              logging.info(f"   > {model} ({specific_model}): {rec}")
 
-                # Save to DB (Main Record - Pure RSI + SMA)
+                # Save to DB (Main Record - Pure RSI + SMA + Low RSI Flag)
                 db.save_rsi_result(
                     date=today_str,
                     code=code,
@@ -201,7 +215,8 @@ def analyze_kosdaq150():
                     rsi=rsi_val,
                     close_price=close_val,
                     sma=sma_val,
-                    is_above_sma=is_above_sma
+                    is_above_sma=is_above_sma,
+                    is_low_rsi=is_low_rsi
                 )
 
                 if i % 10 == 0:

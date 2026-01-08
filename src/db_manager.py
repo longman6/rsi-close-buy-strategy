@@ -106,6 +106,10 @@ class DBManager:
                     logging.info("Migrating DB: Adding is_above_sma column to daily_rsi")
                     cursor.execute("ALTER TABLE daily_rsi ADD COLUMN is_above_sma INTEGER")
 
+                if 'is_low_rsi' not in rsi_columns:
+                    logging.info("Migrating DB: Adding is_low_rsi column to daily_rsi")
+                    cursor.execute("ALTER TABLE daily_rsi ADD COLUMN is_low_rsi INTEGER")
+
                 conn.commit()
         except Exception as e:
             logging.error(f"[DB] Init Error: {e}")
@@ -114,16 +118,17 @@ class DBManager:
 
 
 
-    def save_rsi_result(self, date: str, code: str, name: str, rsi: float, close_price: float, sma: float = None, is_above_sma: bool = False):
+    def save_rsi_result(self, date: str, code: str, name: str, rsi: float, close_price: float, sma: float = None, is_above_sma: bool = False, is_low_rsi: bool = False):
         """Save a single RSI analysis record."""
         try:
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
                 is_above_int = 1 if is_above_sma else 0
+                is_low_int = 1 if is_low_rsi else 0
                 cursor.execute("""
-                    INSERT INTO daily_rsi (date, code, name, rsi, close_price, sma, is_above_sma)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (date, code, name, rsi, close_price, sma, is_above_int))
+                    INSERT INTO daily_rsi (date, code, name, rsi, close_price, sma, is_above_sma, is_low_rsi)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (date, code, name, rsi, close_price, sma, is_above_int, is_low_int))
                 conn.commit()
         except Exception as e:
             logging.error(f"[DB] Save RSI Error: {e}")
