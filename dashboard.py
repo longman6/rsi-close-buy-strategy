@@ -39,7 +39,7 @@ def get_strategy():
 
 @st.cache_resource
 def get_trade_manager():
-    return TradeManager()
+    return TradeManager(db=DBManager())
 
 # --- Authentication Logic ---
 def login_page():
@@ -310,10 +310,18 @@ def render_dashboard():
     st.markdown(f"### 📈 Current Holdings | P/L: :{pnl_color}[{total_pnl:,.0f} KRW ({total_rate:.2f}%)]")
     
     if holdings:
-        holdings_data = []
-        
+        # Header Row
+        h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 1, 1, 1, 1.5, 1.5, 1])
+        h1.markdown("**Name/Code**")
+        h2.markdown("**Price**")
+        h3.markdown("**Qty**")
+        h4.markdown("**RSI/SMA**")
+        h5.markdown("**P/L**")
+        h6.markdown("**Day Chg**")
+        h7.markdown("**Action**")
+        st.divider()
+
         # Fetch RSI for each (cached if possible, but real-time needed)
-        # We need to fetch OHLCV for RSI. This might be slow for many stocks.
         progress_bar = st.progress(0)
         
         for i, h in enumerate(holdings):
@@ -322,54 +330,112 @@ def render_dashboard():
             curr = float(h['prpr'])
             avg = float(h['pchs_avg_pric'])
             qty = int(h['hldg_qty'])
-            pnl_pct = float(h['evlu_pfls_rt']) # KIS gives this
+            pnl_pct = float(h['evlu_pfls_rt']) 
             pnl_amt = float(h['evlu_pfls_amt']) 
             
-            # RSI Calculation & Day Change
+            # RSI/SMA Calculation & Day Change
             df = kis.get_daily_ohlcv(code)
             rsi = 0.0
+            sma = 0.0
+            is_above_sma = False
             day_change_pct = 0.0
 
             if not df.empty:
                 df = strategy.calculate_indicators(df)
+                latest = df.iloc[-1]
                 if 'RSI' in df.columns:
-                    rsi = df['RSI'].iloc[-1]
+                    rsi = latest['RSI']
+                if 'SMA' in df.columns:
+                    sma = latest['SMA']
+                    if 'Close' in df.columns and latest['Close'] > sma:
+                        is_above_sma = True
 
-                # Calculate day change (전일 대비 등락율)
+                # Calculate day change
                 if len(df) >= 2:
                     yesterday_close = df['Close'].iloc[-2]
                     today_price = curr
                     if yesterday_close > 0:
                         day_change_pct = ((today_price - yesterday_close) / yesterday_close) * 100
 
-            # Naver Link
+            # UI Rendering
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 1, 1, 1, 1.5, 1.5, 1])
+            
+            # 1. Name
             url = f"https://finance.naver.com/item/main.naver?code={code}"
-            link_html = f"<a href='{url}' target='_blank'>{name}</a>"
+            c1.markdown(f"[{name}]({url})\n`{code}`")
+            
+            # 2. Price
+            c2.write(f"{curr:,.0f}\n({avg:,.0f})")
+            
+            # 3. Qty
+            c3.write(f"{qty:,}")
+            
+            # 4. RSI/SMA
+            sma_icon = "✅" if is_above_sma else "❌"
+            c4.write(f"RSI: {rsi:.1f}\nSMA: {int(sma):,} {sma_icon}")
+            
+            # 5. P/L
+            pnl_c = "red" if pnl_pct >= 0 else "blue"
+            c5.markdown(f":{pnl_c}[{pnl_pct:.2f}%]\n:{pnl_c}[{pnl_amt:,.0f}]")
+            
+            # 6. Day Change
+            day_c = "red" if day_change_pct > 0 else "blue" if day_change_pct < 0 else "grey"
+            c6.markdown(f":{day_c}[{day_change_pct:+.2f}%]")
+            
+            # 7. Action Button
+            sell_key = f"sell_state_{code}"
+            
+            # Check if we are in confirmation mode for this stock
+            if st.session_state.get(sell_key):
+                # Confirmation Mode
+                ac1, ac2 = c7.columns(2)
+                if ac1.button("확인", key=f"confirm_{code}", type="primary", use_container_width=True):
+                    # Execute Market Sell
+                    with st.spinner(f"Selling {name}..."):
+                        success, msg = kis.send_order(code, qty, side="sell", price=0) # Market Sell
+                        if success:
+                            st.success(f"Sold {name}!")
+                            
+                            # Log Trade (Same logic)
+                            try:
+                                now_kst = datetime.now(pytz.timezone('Asia/Seoul'))
+                                date_str = now_kst.strftime("%Y%m%d")
+                                trade_manager.update_sell(
+                                    code=code, 
+                                    name=name, 
+                                    date_str=date_str, 
+                                    price=curr, 
+                                    qty=qty, 
+                                    pnl_pct=pnl_pct
+                                )
+                                st.toast("Trade history saved.")
+                            except Exception as e:
+                                st.error(f"Failed to save trade history: {e}")
+                                
+                            del st.session_state[sell_key] # Reset state
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"Failed: {msg}")
+                            del st.session_state[sell_key] # Reset on fail
+                            
+                if ac2.button("취소", key=f"cancel_{code}", use_container_width=True):
+                    del st.session_state[sell_key]
+                    st.rerun()
+            else:
+                # Default Mode
+                if c7.button("매도", key=f"init_sell_{code}", type="secondary", use_container_width=True):
+                    st.session_state[sell_key] = True
+                    st.rerun()
 
-            # Color for day change
-            day_change_color = "🔴" if day_change_pct > 0 else "🔵" if day_change_pct < 0 else "⚪"
-
-            holdings_data.append({
-                "Name": link_html,
-                "Code": code,
-                "Price": f"{curr:,.0f}",
-                "Avg Price": f"{avg:,.0f}",
-                "Qty": qty,
-                "RSI": f"{rsi:.2f}",
-                "Day Chg": f"{day_change_color} {day_change_pct:+.2f}%",
-                "P/L (%)": f"{pnl_pct:.2f}%",
-                "P/L (₩)": f"{pnl_amt:,.0f}"
-            })
+            st.divider()
             progress_bar.progress((i + 1) / len(holdings))
             
         progress_bar.empty()
         
-        df_h = pd.DataFrame(holdings_data)
-        st.write(df_h.to_html(escape=False), unsafe_allow_html=True)
-        
     else:
         st.info("No active positions.")
-
+    
     st.divider()
 
     # 2. Trade History (Realized Profit)
