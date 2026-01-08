@@ -342,8 +342,12 @@ class KISClient:
                 # output1: Holdings list, output2: Account Summary
                 holdings = data['output1']
                 summary = data['output2'][0]
+                
+                cash_info = self.get_buyable_cash()
+                
                 return {
-                    'cash_available': self.get_buyable_cash(), # Real Orderable Cash
+                    'cash_available': cash_info['cash'], # Real Orderable Cash
+                    'max_buy_amt': cash_info['max_buy'], # Max Buyable (Margin included)
                     'total_asset': float(summary.get('tot_evlu_amt', 0)),
                     'total_pnl': float(summary.get('evlu_pfls_smt_tl', 0)),
                     'total_return_rate': float(summary.get('evlu_pfls_rt', 0)),
@@ -359,6 +363,7 @@ class KISClient:
         """
         Fetch Real-Time Orderable Cash via inquire-psbl-order.
         TR_ID: TTTC8908R (Real) / VTTC8908R (Mock)
+        Returns dict with 'cash' and 'max_buy'
         """
         path = "/uapi/domestic-stock/v1/trading/inquire-psbl-order"
         
@@ -380,10 +385,13 @@ class KISClient:
         if res and res.status_code == 200:
             data = res.json()
             if data['rt_cd'] == '0':
-                return float(data['output']['ord_psbl_cash'])
+                return {
+                    "cash": float(data['output']['ord_psbl_cash']),
+                    "max_buy": float(data['output']['max_buy_amt'])
+                }
             else:
                  logging.warning(f"[KIS] Buyable Cash Error: {data['msg1']}")
-        return 0.0
+        return {"cash": 0.0, "max_buy": 0.0}
 
     def is_trading_day(self, date_str):
         """

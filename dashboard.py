@@ -265,6 +265,7 @@ def render_dashboard():
     st.subheader("💼 Portfolio Status")
     
     if st.button("🔄 Refresh Data"):
+        st.cache_resource.clear()
         st.cache_data.clear()
         st.rerun()
 
@@ -276,13 +277,14 @@ def render_dashboard():
         return
 
     # Metrics
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total Asset", f"{balance['total_asset']:,.0f} KRW")
-    col2.metric("Cash Available", f"{balance['cash_available']:,.0f} KRW")
+    col2.metric("Max Orderable", f"{balance.get('max_buy_amt', 0):,.0f} KRW")
+    col3.metric("Cash Available", f"{balance['cash_available']:,.0f} KRW")
     
     holdings = [h for h in balance['holdings'] if int(h['hldg_qty']) > 0]
     holdings_count = len(holdings)
-    col3.metric("Positions", f"{holdings_count} / {config.MAX_POSITIONS}")
+    col4.metric("Positions", f"{holdings_count} / {config.MAX_POSITIONS}")
 
     st.divider()
     
