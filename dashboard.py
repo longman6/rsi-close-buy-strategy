@@ -572,7 +572,15 @@ def render_ai_advice_page():
         price_fmt = f"{int(row['close_price']):,}" if pd.notna(row['close_price']) else "N/A"
         url = f"https://finance.naver.com/item/main.naver?code={code}"
         
-        title = f":{color}[{summary}] **{name}** ({code}) | RSI: {rsi:.2f} | Close: {price_fmt} KRW"
+        # SMA Formatting
+        sma_val = row.get('sma')
+        is_above = row.get('is_above_sma')
+        sma_str = ""
+        if pd.notna(sma_val):
+             icon = "✅" if is_above else "❌"
+             sma_str = f" | SMA: {int(float(sma_val)):,} {icon}"
+
+        title = f":{color}[{summary}] **{name}** ({code}) | RSI: {rsi:.2f}{sma_str} | Close: {price_fmt} KRW"
         
         with st.expander(title):
             st.markdown(f"### 🔗 [{name} ({code})]({url})")
@@ -692,10 +700,11 @@ def render_full_rsi_page():
             except: return "Err"
 
         df['close_fmt'] = df['close_price'].map(safe_fmt_close)
-        
+        df['sma_fmt'] = df.apply(lambda row: f"{safe_fmt_close(row.get('sma', 0))} {'(✅)' if row.get('is_above_sma') else '(❌)'}", axis=1)
+
         # Display Columns
-        df_display = df[['code', 'name', 'rsi_fmt', 'close_fmt', 'AI Rec']].copy()
-        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Close', 'Consensus']
+        df_display = df[['code', 'name', 'rsi_fmt', 'close_fmt', 'sma_fmt', 'AI Rec']].copy()
+        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Close', 'SMA(50)', 'Consensus']
         
         # Naver Link
         df_display['Name'] = df_display.apply(

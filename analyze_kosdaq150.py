@@ -156,11 +156,17 @@ def analyze_kosdaq150():
                 # Get latest values and cast to Python native types (crucial for SQLite)
                 rsi_val = float(latest.get('RSI', 0)) if pd.notna(latest.get('RSI')) else None
                 close_val = float(latest.get('Close', 0))
+                sma_val = float(latest.get('SMA', 0)) if pd.notna(latest.get('SMA')) else None
                 
+                is_above_sma = False
+                if sma_val is not None and close_val > sma_val:
+                    is_above_sma = True
+
                 # 3. AI Advice Logic
                 # Query if RSI <= 30 (User Request)
                 if rsi_val is not None and rsi_val <= 30:
-                     logging.info(f"👀 Low RSI Candidate (<=30): {name}({code}) RSI={rsi_val:.2f}")
+                     sma_status = "✅Above SMA" if is_above_sma else "❌Below SMA"
+                     logging.info(f"👀 Low RSI Candidate (<=30): {name}({code}) RSI={rsi_val:.2f} | {sma_status}")
                      
                      # Check Danger before spending tokens
                      is_danger, reason = kis.check_dangerous_stock(code)
@@ -170,7 +176,7 @@ def analyze_kosdaq150():
                      else:
                          # Prepare OHLCV Text (Last 30 days)
                          recent_df = df.tail(30)
-                         ohlcv_text = recent_df[['Open', 'High', 'Low', 'Close', 'Volume', 'RSI']].to_string()
+                         ohlcv_text = recent_df[['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'SMA']].to_string()
 
                          # Ask AI Manager (All Enabled Models)
                          logging.info(f"🤖 Asking AIs about {name}...")
@@ -187,13 +193,15 @@ def analyze_kosdaq150():
                              db.save_ai_advice(today_str, code, model, rec, reasoning, specific_model, prompt)
                              logging.info(f"   > {model} ({specific_model}): {rec}")
 
-                # Save to DB (Main Record - Pure RSI)
+                # Save to DB (Main Record - Pure RSI + SMA)
                 db.save_rsi_result(
                     date=today_str,
                     code=code,
                     name=name,
                     rsi=rsi_val,
-                    close_price=close_val
+                    close_price=close_val,
+                    sma=sma_val,
+                    is_above_sma=is_above_sma
                 )
 
                 if i % 10 == 0:

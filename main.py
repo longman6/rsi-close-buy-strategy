@@ -251,7 +251,7 @@ def run_morning_analysis(kis, telegram, strategy, trade_manager):
     # 1. Get Low RSI Candidates
     rsi_threshold = config.RSI_BUY_THRESHOLD 
     
-    low_rsi_candidates = db.get_low_rsi_candidates(today_str, threshold=rsi_threshold)
+    low_rsi_candidates = db.get_low_rsi_candidates(today_str, threshold=rsi_threshold, min_sma_check=True)
     logging.info(f"Found {len(low_rsi_candidates)} candidates with RSI < {rsi_threshold}")
     
     if not low_rsi_candidates:

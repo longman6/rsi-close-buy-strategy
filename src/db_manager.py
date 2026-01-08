@@ -95,6 +95,17 @@ class DBManager:
                     logging.info("Migrating DB: Adding prompt column to ai_advice")
                     cursor.execute("ALTER TABLE ai_advice ADD COLUMN prompt TEXT")
                 
+                # Migration: Add SMA columns to daily_rsi
+                cursor.execute("PRAGMA table_info(daily_rsi)")
+                rsi_columns = [info[1] for info in cursor.fetchall()]
+                if 'sma' not in rsi_columns:
+                    logging.info("Migrating DB: Adding sma column to daily_rsi")
+                    cursor.execute("ALTER TABLE daily_rsi ADD COLUMN sma REAL")
+                
+                if 'is_above_sma' not in rsi_columns:
+                    logging.info("Migrating DB: Adding is_above_sma column to daily_rsi")
+                    cursor.execute("ALTER TABLE daily_rsi ADD COLUMN is_above_sma INTEGER")
+
                 conn.commit()
         except Exception as e:
             logging.error(f"[DB] Init Error: {e}")
@@ -103,15 +114,16 @@ class DBManager:
 
 
 
-    def save_rsi_result(self, date: str, code: str, name: str, rsi: float, close_price: float):
+    def save_rsi_result(self, date: str, code: str, name: str, rsi: float, close_price: float, sma: float = None, is_above_sma: bool = False):
         """Save a single RSI analysis record."""
         try:
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
+                is_above_int = 1 if is_above_sma else 0
                 cursor.execute("""
-                    INSERT INTO daily_rsi (date, code, name, rsi, close_price)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (date, code, name, rsi, close_price))
+                    INSERT INTO daily_rsi (date, code, name, rsi, close_price, sma, is_above_sma)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (date, code, name, rsi, close_price, sma, is_above_int))
                 conn.commit()
         except Exception as e:
             logging.error(f"[DB] Save RSI Error: {e}")
@@ -231,22 +243,30 @@ class DBManager:
             logging.error(f"[DB] Consensus Fetch Error: {e}")
         return candidates
 
-    def get_low_rsi_candidates(self, date: str, threshold: float = 30.0) -> List[Dict]:
+    def get_low_rsi_candidates(self, date: str, threshold: float = 30.0, min_sma_check: bool = False) -> List[Dict]:
         """
         Get list of stocks with RSI < threshold for the given date.
-        Returns list of dicts: {code, name, rsi, close_price}
+        Returns list of dicts: {code, name, rsi, close_price, sma, is_above_sma}
         """
         results = []
         try:
             with sqlite3.connect(self.db_file) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT code, name, rsi, close_price
+                
+                query = """
+                    SELECT code, name, rsi, close_price, sma, is_above_sma
                     FROM daily_rsi
                     WHERE date = ? AND rsi < ?
-                    ORDER BY rsi ASC
-                """, (date, threshold))
+                """
+                params = [date, threshold]
+                
+                if min_sma_check:
+                    query += " AND is_above_sma = 1"
+                    
+                query += " ORDER BY rsi ASC"
+                
+                cursor.execute(query, params)
                 
                 rows = cursor.fetchall()
                 for row in rows:
