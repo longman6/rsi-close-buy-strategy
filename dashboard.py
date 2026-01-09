@@ -374,7 +374,7 @@ def render_dashboard():
             
             # 4. RSI/SMA
             sma_icon = "✅" if is_above_sma else "❌"
-            c4.write(f"RSI: {rsi:.1f}\nSMA: {int(sma):,} {sma_icon}")
+            c4.write(f"RSI: {rsi:.1f}\nSMA({config.SMA_WINDOW}): {int(sma):,} {sma_icon}")
             
             # 5. P/L
             pnl_c = "red" if pnl_pct >= 0 else "blue"
