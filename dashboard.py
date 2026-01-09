@@ -772,8 +772,9 @@ def render_full_rsi_page():
         df['low_rsi_fmt'] = df.apply(lambda row: "✅" if row.get('is_low_rsi') else "", axis=1)
 
         # Display Columns
+        # Display Columns
         df_display = df[['code', 'name', 'rsi_fmt', 'low_rsi_fmt', 'close_fmt', 'sma_fmt', 'AI Rec']].copy()
-        df_display.columns = ['Code', 'Name', 'RSI(3)', 'Low RSI', 'Close', 'SMA(50)', 'Consensus']
+        df_display.columns = ['Code', 'Name', f'RSI({config.RSI_WINDOW})', 'Low RSI', 'Close', f'SMA({config.SMA_WINDOW})', 'Consensus']
         
         # Naver Link
         df_display['Name'] = df_display.apply(

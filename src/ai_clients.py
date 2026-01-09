@@ -19,12 +19,15 @@ except ImportError:
     genai = None
 
 
+import config
+
 def _get_common_prompt(stock_name: str, code: str, rsi: float, ohlcv_text: str, news_context: str = "") -> str:
-    return f"""
+    return f\"\"\"
     Analyze the KOSDAQ stock "{stock_name}" ({code}) for a potential Short-term Rebound Trade (1-10 days).
 
     [Technical Data]
-    - Current RSI(3): {rsi:.2f} (Extremely Low < 30 usually indicates oversold)
+    - Current RSI({config.RSI_WINDOW}): {rsi:.2f}
+    - Note: RSI and SMA are calculated based on user config (RSI period: {config.RSI_WINDOW}, SMA period: {config.SMA_WINDOW}).
     - Recent Price History (Last 30 Days):
     {ohlcv_text}
 
