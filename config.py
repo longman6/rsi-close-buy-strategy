@@ -10,6 +10,8 @@ KIS_CANO = os.getenv("KIS_CANO", "")
 KIS_ACNT_PRDT_CD = os.getenv("KIS_ACNT_PRDT_CD", "01")
 KIS_URL_BASE = os.getenv("KIS_URL_BASE", "https://openapi.koreainvestment.com:9443")
 
+USER_DB_PATH = os.getenv("USER_DB_PATH", "data/user_data.db")
+
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
