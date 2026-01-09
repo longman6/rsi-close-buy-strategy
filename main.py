@@ -131,8 +131,10 @@ def main():
     # Disable Telegram in Mock Mode? User might still want logs.
     # User requested control via .env ENABLE_NOTIFICATIONS, so we respect that.
     if kis.is_mock and telegram.enabled:
+         logging.info("🤖 Bot Loop Started (Mock Mode). Waiting for schedule...")
          telegram.send_message("🤖 Bot Loop Started (Mock Mode). Waiting for schedule...")
     elif telegram.enabled:
+         logging.info("🤖 Bot Loop Started (Real Mode). Waiting for schedule...")
          telegram.send_message("🤖 Bot Loop Started (Real Mode). Waiting for schedule...")
 
     # FORCE Initial State Reset (to load exclusion list and check holiday)
@@ -163,11 +165,11 @@ def main():
             # 1. 08:30 Analysis & Buy Candidate Selection
             # Window: 08:30 ~ 08:50
             if not state["is_holiday"]:
-                if current_time >= config.TIME_MORNING_ANALYSIS and current_time <= "08:50":
+                if current_time >= config.TIME_MORNING_ANALYSIS and current_time <= config.TIME_MORNING_ANALYSIS_END:
                     if not state["analysis_done"]:
                         run_morning_analysis(kis, telegram, strategy, trade_manager)
                         state["analysis_done"] = True
-                elif current_time > "08:50" and not state["analysis_done"]:
+                elif current_time > config.TIME_MORNING_ANALYSIS_END and not state["analysis_done"]:
                     # If started late (after 08:50), skip analysis
                     logging.info(f"⏭️ [Skip] Morning Analysis window passed ({current_time}).")
                     state["analysis_done"] = True
@@ -175,11 +177,11 @@ def main():
             # 2. 08:57 Pre-Market Order (1차 주문)
             # Window: 08:57 ~ 09:10
             if not state["is_holiday"]:
-                if current_time >= config.TIME_PRE_ORDER and current_time <= "09:10":
+                if current_time >= config.TIME_PRE_ORDER and current_time <= config.TIME_PRE_ORDER_END:
                     if not state["pre_order_done"]:
                         run_pre_order(kis, telegram, trade_manager)
                         state["pre_order_done"] = True
-                elif current_time > "09:10" and not state["pre_order_done"]:
+                elif current_time > config.TIME_PRE_ORDER_END and not state["pre_order_done"]:
                     # If started late, skip pre-order
                     logging.info(f"⏭️ [Skip] Pre-Order window passed ({current_time}).")
                     state["pre_order_done"] = True
@@ -601,6 +603,7 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
             if rem_qty > 0 and order_price != current_price:
                 kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'],
                                        rem_qty, int(current_price), is_cancel=False)
+                logging.info(f"✏️ Modified {code} -> {int(current_price):,} (Fallback Default)")
                 telegram.send_message(f"✏️ Modified {code} -> {int(current_price):,}")
             continue
 
@@ -795,6 +798,7 @@ def run_sell_execution(kis, telegram, strategy, trade_manager):
              # Execute Market Sell (01)
              success, msg = kis.send_order(code, qty, side="sell", price=0, order_type="01")
              if success:
+                 logging.info(f"👋 Sold {name} ({reason}): {msg}")
                  telegram.send_message(f"👋 Sold {name} ({reason}): {msg}")
                  
                  # Calculate P/L for History
