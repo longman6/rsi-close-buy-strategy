@@ -340,7 +340,7 @@ def run_pre_order(kis, telegram, trade_manager):
         return
 
     balance = kis.get_balance()
-    cash = balance['cash_available']
+    cash = float(balance.get('max_buy_amt', 0))
     count = len(state["buy_targets"])
     if count == 0: return
 
@@ -437,7 +437,7 @@ def run_second_order(kis, telegram, trade_manager):
         telegram.send_message("❌ 2차 주문 실패: 잔고 조회 불가")
         return
 
-    current_cash = balance.get('cash_available', 0)
+    current_cash = float(balance.get('max_buy_amt', 0))
     logging.info(f"💰 Available Cash: {current_cash:,} KRW")
 
     amt_per_stock_config = config.BUY_AMOUNT_KRW
