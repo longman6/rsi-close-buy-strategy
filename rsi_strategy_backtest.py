@@ -39,9 +39,10 @@ set_korean_font()
 # ---------------------------------------------------------
 # 2. 전략 설정 (최적화 파라미터 적용)
 # ---------------------------------------------------------
-START_DATE = '2005-01-01'
+START_DATE = '2010-01-01'
 INITIAL_CAPITAL = 100000000
 MAX_POSITIONS = 5
+MAX_HOLDING_DAYS = 40   # 최대 보유일 (영업일 기준 아님, 캘린더 일수)
 ALLOCATION_PER_STOCK = 0.20
 TX_FEE_RATE = 0.00015   # 0.015% (매수/매도 각각)
 TAX_RATE = 0.0020       # 0.2% (매도 시)
@@ -58,7 +59,7 @@ SMA_WINDOW = 50        # 이동평균선 기간 (100일선 -> 50)
 # ---------------------------------------------------------
 def get_kosdaq150_tickers():
     """Load KOSDAQ 150 tickers from local file 'kosdaq150_list.txt'."""
-    filename = 'kosdaq150_list.txt'
+    filename = 'data/kosdaq150_list.txt'
     tickers = []
     try:
         import ast
@@ -153,7 +154,15 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
 # ---------------------------------------------------------
 # 4. 시뮬레이션 엔진
 # ---------------------------------------------------------
-def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False):
+def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False, 
+                   max_holding_days=MAX_HOLDING_DAYS, 
+                   buy_threshold=BUY_THRESHOLD, 
+                   sell_threshold=SELL_THRESHOLD, 
+                   max_positions=MAX_POSITIONS):
+    
+    # Dynamic Allocation
+    allocation_per_stock = 1.0 / max_positions
+
     all_dates = sorted(list(set().union(*[df.index for df in stock_data.values()])))
     # If using filter, ensure we have market data for these dates
     if use_filter and market_data is not None:
@@ -175,10 +184,16 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 current_price = df.loc[date, 'Close']
                 pos['last_price'] = current_price
                 rsi = df.loc[date, 'RSI']
+                
+                # 보유 기간 계산
+                days_held = (date - pos['buy_date']).days
 
-                # 매도 조건: RSI > SELL_THRESHOLD (70)
-                if rsi > SELL_THRESHOLD:
-                    tickers_to_sell.append(ticker)
+                # 매도 조건: RSI > SELL_THRESHOLD OR Max Holding Days Reached
+                if rsi > sell_threshold:
+                    tickers_to_sell.append({'ticker': ticker, 'reason': 'SIGNAL'})
+                elif days_held >= max_holding_days:
+                    tickers_to_sell.append({'ticker': ticker, 'reason': 'FORCE'})
+
             else:
                 current_price = pos['last_price']
 
@@ -187,7 +202,10 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
         total_equity = cash + current_positions_value
         history.append({'Date': date, 'Equity': total_equity})
 
-        for ticker in tickers_to_sell:
+        for item in tickers_to_sell:
+            ticker = item['ticker']
+            reason = item['reason']
+            
             pos = positions.pop(ticker)
             sell_price = stock_data[ticker].loc[date, 'Close']
 
@@ -198,7 +216,13 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
             buy_total_cost = (pos['shares'] * pos['buy_price']) * (1 + TX_FEE_RATE + SLIPPAGE_RATE)
             net_return = ((sell_amt - cost) - buy_total_cost) / buy_total_cost * 100
 
-            trades.append({'Ticker': ticker, 'Return': net_return, 'Date': date})
+            trades.append({
+                'Ticker': ticker, 
+                'Return': net_return, 
+                'Date': date,
+                'Reason': reason,
+                'Days': (date - pos['buy_date']).days
+            })
 
         # 2. 매수
         # Market Filter Check
@@ -213,7 +237,7 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                  # If no market data, assume OK or Skip? Let's assume OK to be less restrictive on missing data
                  pass
 
-        open_slots = MAX_POSITIONS - len(positions)
+        open_slots = max_positions - len(positions)
         if open_slots > 0 and market_condition_ok:
             buy_candidates = []
             for ticker in valid_tickers:
@@ -222,14 +246,15 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 if date not in df.index: continue
 
                 row = df.loc[date]
-                # 매수 조건: SMA선 위 & RSI < BUY_THRESHOLD (35)
-                if row['Close'] > row['SMA'] and row['RSI'] < BUY_THRESHOLD:
+                # 매수 조건: SMA선 위 & RSI < BUY_THRESHOLD
+                if row['Close'] > row['SMA'] and row['RSI'] < buy_threshold:
                     buy_candidates.append({'ticker': ticker, 'rsi': row['RSI'], 'price': row['Close']})
 
             if buy_candidates:
                 buy_candidates.sort(key=lambda x: x['rsi'])
                 for candidate in buy_candidates[:open_slots]:
-                    target_amt = total_equity * ALLOCATION_PER_STOCK
+                    # Dynamic Allocation Amount
+                    target_amt = total_equity * allocation_per_stock
                     invest_amt = min(target_amt, cash)
                     max_buy_amt = invest_amt / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
 
@@ -240,7 +265,8 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                         cash -= (buy_val + buy_val * (TX_FEE_RATE + SLIPPAGE_RATE))
                         positions[candidate['ticker']] = {
                             'shares': shares, 'buy_price': candidate['price'],
-                            'last_price': candidate['price']
+                            'last_price': candidate['price'],
+                            'buy_date': date
                         }
 
     # 결과 정리
@@ -431,10 +457,12 @@ def run_2025_full_year_comparison():
         df['Name'] = df['Ticker'].apply(get_name)
         
         # Markdown Table
-        header = "| 날짜 | 종목명 | 코드 | 수익률 |\n| :--- | :--- | :--- | :--- |\n"
+        header = "| 날짜 | 종목명 | 코드 | 수익률 | 사유 | 보유일 |\n| :--- | :--- | :--- | :--- | :--- | :--- |\n"
         rows = ""
         for _, row in df.iterrows():
-            rows += f"| {row['Date']} | {row['Name']} | {row['Ticker']} | {row['Return']} |\n"
+            reason = row.get('Reason', '-')
+            days = row.get('Days', '-')
+            rows += f"| {row['Date']} | {row['Name']} | {row['Ticker']} | {row['Return']} | {reason} | {days}일 |\n"
         return header + rows
 
     comparison_summary = f"""
@@ -466,7 +494,84 @@ def run_2025_full_year_comparison():
     print(comparison_summary)
     print(f"\n✅ 상세 리포트가 '{report_filename}'에 저장되었습니다.")
 
+
+def run_comparative_backtest():
+    import json
+    
+    config_file = 'backtest_config.json'
+    if not os.path.exists(config_file):
+        print(f"❌ {config_file} not found.")
+        return
+
+    with open(config_file, 'r', encoding='utf-8') as f:
+        configs = json.load(f)
+
+    tickers = get_kosdaq150_tickers()
+    results = []
+
+    print(f"\n🚀 Running Comparative Backtest for options: {list(configs.keys())}")
+    
+    for name, cfg in configs.items():
+        print(f"\n>>> [Option {name}] Parameters: {cfg}")
+        
+        # Prepare Data
+        stock_data, valid_tickers = prepare_data(
+            tickers, 
+            START_DATE, 
+            cfg['rsi_window'], 
+            cfg['sma_window']
+        )
+        
+        # Run Simulation
+        ret, mdd, win_rate, count, hist, trades = run_simulation(
+            stock_data, 
+            valid_tickers, 
+            use_filter=False,
+            max_holding_days=cfg['max_holding_days'],
+            buy_threshold=cfg['buy_threshold'],
+            sell_threshold=cfg['sell_threshold'],
+            max_positions=cfg['max_positions']
+        )
+        
+        results.append({
+            "Name": name,
+            "Return": ret,
+            "MDD": mdd,
+            "WinRate": win_rate,
+            "Count": count,
+            "Params": cfg
+        })
+        print(f"   👉 Result: Return {ret:.2f}%, MDD {mdd:.2f}%, WinRate {win_rate:.2f}%")
+
+    # Generate Report
+    print("\n--------------------------------------------------------------")
+    print("📊 Comparative Backtest Results")
+    print("--------------------------------------------------------------")
+    
+    header = f"| Option | Return | MDD | Win Rate | Trades | RSI | SMA | Hold | Pos |\n"
+    header += f"| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+    
+    rows = []
+    for r in results:
+        p = r['Params']
+        row = f"| **{r['Name']}** | **{r['Return']:.2f}%** | {r['MDD']:.2f}% | {r['WinRate']:.2f}% | {r['Count']} | "
+        row += f"{p['rsi_window']} / {p['buy_threshold']}-{p['sell_threshold']} | {p['sma_window']} | {p['max_holding_days']}d | {p['max_positions']} |"
+        rows.append(row)
+    
+    table = "\n".join(rows)
+    final_report = f"\n{header}\n{table}\n"
+    
+    print(final_report)
+    
+    with open("comparative_backtest_report.md", "w", encoding="utf-8") as f:
+        f.write("# Consolidated Backtest Report\n")
+        f.write(f"Generated at: {datetime.now()}\n\n")
+        f.write(final_report)
+        
+    print("✅ Report saved to comparative_backtest_report.md")
+
 if __name__ == "__main__":
     # run_backtest() 
     # run_2025_dec_comparison()
-    run_2025_full_year_comparison()
+    # run_2025_full_year_comparison()
+    run_comparative_backtest()
