@@ -32,7 +32,33 @@ logging.basicConfig(
 
 
 def get_kosdaq150_universe():
-    """Fetch KOSDAQ 150 tickers using PyKRX (Index Code 2203)."""
+    """Fetch KOSDAQ 150 tickers. Prioritizes local file."""
+    fallback_file = "data/kosdaq150_list.txt"
+    
+    # 1. Try Local File First
+    if os.path.exists(fallback_file):
+        logging.info(f"📂 Loading universe from {fallback_file}...")
+        universe = []
+        try:
+            with open(fallback_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.endswith(','): 
+                        line = line[:-1] # Remove trailing comma
+                    if not line: continue
+                    
+                    try:
+                        item = ast.literal_eval(line)
+                        universe.append(item)
+                    except:
+                        pass
+            logging.info(f"Loaded {len(universe)} stocks from file.")
+            if universe:
+                return universe
+        except Exception as e:
+            logging.error(f"File Load Error: {e}")
+
+    # 2. Fallback to PyKRX
     try:
         from pykrx import stock
         tickers = stock.get_index_portfolio_deposit_file("2203") # KOSDAQ 150
@@ -50,34 +76,10 @@ def get_kosdaq150_universe():
 
     except Exception as e:
         logging.error(f"PyKRX Universe Fetch Error: {e}")
-        
-        # Fallback: Read from local file 'kosdaq150_list.txt'
-        fallback_file = "data/kosdaq150_list.txt"
-        if os.path.exists(fallback_file):
-            logging.info(f"📂 Loading universe from {fallback_file}...")
-            universe = []
-            try:
-                with open(fallback_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.endswith(','): 
-                            line = line[:-1] # Remove trailing comma
-                        if not line: continue
-                        
-                        try:
-                            item = ast.literal_eval(line)
-                            universe.append(item)
-                        except:
-                            pass
-                return universe
-            except Exception as fe:
-                logging.error(f"File Fallback Error: {fe}")
-        
-        # Ultimate Fallback if file missing
-        return [
-            {'code': '247540', 'name': '에코프로비엠'},
-            {'code': '086520', 'name': '에코프로'},
-        ]
+
+        return []
+
+
 
 def analyze_kosdaq150():
     # Initialize KIS Client first

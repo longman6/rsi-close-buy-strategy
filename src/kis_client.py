@@ -121,9 +121,9 @@ class KISClient:
             res = None
             try:
                 if method == "GET":
-                    res = requests.get(url, headers=headers, params=params)
+                    res = requests.get(url, headers=headers, params=params, timeout=10)
                 else:
-                    res = requests.post(url, headers=headers, data=json.dumps(body) if body else None)
+                    res = requests.post(url, headers=headers, data=json.dumps(body) if body else None, timeout=10)
                 
                 # Check for Token Expiry
                 is_expired = False
