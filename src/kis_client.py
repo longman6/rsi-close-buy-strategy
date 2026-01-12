@@ -204,14 +204,34 @@ class KISClient:
             "FID_INPUT_ISCD": code # Stock Code
         }
         
-        res = self._send_request("GET", path, "FHKST01010100", params=params)
         
-        if res and res.status_code == 200:
-            data = res.json()
-            if data['rt_cd'] == '0':
-                return data['output']
-            else:
-                logging.warning(f"[KIS] GetPrice Error {code}: {data['msg1']}")
+        for attempt in range(5):
+            res = self._send_request("GET", path, "FHKST01010100", params=params)
+            
+            if res:
+                if res.status_code == 200:
+                    data = res.json()
+                    if data['rt_cd'] == '0':
+                        return data['output']
+                    else:
+                        # Check for Rate Limit (EGW00201 or similar msg)
+                        msg = data.get('msg1', '')
+                        code_err = data.get('msg_cd', '')
+                        if "초과" in msg or code_err == "EGW00201":
+                            logging.warning(f"[KIS] Rate Limit (GetPrice) -> Sleeping 0.5s... ({attempt+1}/5)")
+                            time.sleep(0.5)
+                            continue
+                        
+                        logging.warning(f"[KIS] GetPrice Error {code}: {msg}")
+                        return None
+                elif res.status_code == 500: # Sometimes Mock throws 500 on rate limit
+                     logging.warning(f"[KIS] Server Error 500 (GetPrice) -> Sleeping 1s... ({attempt+1}/5)")
+                     time.sleep(1)
+                     continue
+
+            time.sleep(0.1) # Default short wait between retries if net error
+            
+        logging.error(f"[KIS] Failed to get price for {code} after retries.")
         return None
 
     def get_daily_ohlcv(self, code, start_date=None, end_date=None, period_code="D"):
