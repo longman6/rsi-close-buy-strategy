@@ -290,13 +290,8 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
     for date in all_dates:
         # 0. Clean up expired lockouts
         # This is strictly not necessary if we check date > lockout_until, but good for memory if long simulation
-        
-        # 1. Update Holding Period (Trading Days)
-        # Increment held_bars for all positions since we are in a valid trading day loop
-        for ticker, pos in positions.items():
-            pos['held_bars'] += 1
 
-        # 2. 평가 및 매도
+        # 1. 평가 및 매도 (먼저!)
         current_positions_value = 0
         tickers_to_sell = []
 
@@ -388,8 +383,14 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                     buy_candidates.append({'ticker': ticker, 'rsi': row['RSI'], 'price': row['Close']})
 
             if buy_candidates:
-                buy_candidates.sort(key=lambda x: x['rsi'])
+                buy_candidates.sort(key=lambda x: x['rsi'])  # RSI만 정렬 (원래대로)
                 for candidate in buy_candidates[:open_slots]:
+                    # 매 매수 전에 현재 포지션 가치 + 현금으로 total_equity 재계산
+                    current_positions_value = sum(
+                        pos['shares'] * pos['last_price'] for pos in positions.values()
+                    )
+                    total_equity = cash + current_positions_value
+                    
                     # Dynamic Allocation Amount
                     target_amt = total_equity * allocation_per_stock
                     invest_amt = min(target_amt, cash)
@@ -406,6 +407,10 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                             'buy_date': date,
                             'held_bars': 0 # Initialize holding period counter (trading days)
                         }
+
+        # 4. 마지막에 held_bars 증가 (매도/매수 완료 후)
+        for ticker, pos in positions.items():
+            pos['held_bars'] += 1
 
     # 결과 정리
     hist_df = pd.DataFrame(history).set_index('Date')

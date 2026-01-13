@@ -37,7 +37,7 @@ def prepare_data_rsi3(tickers, start_date):
     # We load with enough window for SMA 200
     return prepare_data(tickers, start_date, 3, 200)
 
-def run_simulation_worker(sma_period, buy_threshold, sell_threshold, max_holding_days, max_positions):
+def run_simulation_worker(sma_period, buy_threshold, sell_threshold, max_holding_days, max_positions, loss_lockout_days=90):
     """Worker function for parallel processing"""
     stock_data = worker_stock_data
     valid_tickers = worker_valid_tickers
@@ -58,6 +58,9 @@ def run_simulation_worker(sma_period, buy_threshold, sell_threshold, max_holding
     history = []
     trades_count = 0
     wins = 0
+    
+    # Loss Lockout Dictionary: {ticker: lockout_end_date}
+    lockout_until = {}
 
     # Optimization: Pre-calculate SMA for this period for all stocks once
     # This is better done outside the loop
@@ -89,8 +92,8 @@ def run_simulation_worker(sma_period, buy_threshold, sell_threshold, max_holding
                 pos['last_price'] = current_price
                 rsi = df.loc[date, rsi_col]
                 
-                # Sell Conditions
-                if rsi > sell_threshold: 
+                # Sell Conditions (RSI >= sell_threshold)
+                if rsi >= sell_threshold: 
                     tickers_to_remove.append(ticker)
                 elif pos['held_bars'] >= max_holding_days: 
                     tickers_to_remove.append(ticker)
@@ -114,24 +117,48 @@ def run_simulation_worker(sma_period, buy_threshold, sell_threshold, max_holding
             if (sell_amt - cost) > buy_cost: wins += 1
             trades_count += 1
             
+            # Loss Lockout Logic (단순 가격 기준)
+            price_return = sell_price - pos['buy_price']
+            if price_return < 0 and loss_lockout_days > 0:
+                from datetime import timedelta
+                lockout_end = date + timedelta(days=loss_lockout_days)
+                lockout_until[ticker] = lockout_end
+
+        # 매도 후 total_equity 재계산
+        current_positions_value = sum(p['shares'] * p['last_price'] for p in positions.values())
+        total_equity = cash + current_positions_value
+            
         # 2. Buy Logic
         open_slots = max_positions - len(positions)
         if open_slots > 0:
             candidates = []
             for ticker in valid_tickers:
                 if ticker in positions: continue
+                
+                # Check Lockout
+                if ticker in lockout_until:
+                    if date <= lockout_until[ticker]:
+                        continue
+                    else:
+                        del lockout_until[ticker]
+                
                 df = local_data[ticker]
                 if date not in df.index: continue
                 
                 row = df.loc[date]
                 if pd.isna(row['SMA_Dynamic']) or pd.isna(row[rsi_col]): continue # Skip NaN
 
-                if row['Close'] > row['SMA_Dynamic'] and row[rsi_col] < buy_threshold:
+                # 매수 조건 (RSI <= buy_threshold)
+                if row['Close'] > row['SMA_Dynamic'] and row[rsi_col] <= buy_threshold:
                     candidates.append({'ticker': ticker, 'rsi': row[rsi_col], 'price': row['Close']})
             
             if candidates:
                 candidates.sort(key=lambda x: x['rsi'])
                 for can in candidates[:open_slots]:
+                    # 매 매수 전 total_equity 재계산
+                    current_positions_value = sum(p['shares'] * p['last_price'] for p in positions.values())
+                    total_equity = cash + current_positions_value
+                    
                     target = total_equity * allocation_per_stock
                     invest = min(target, cash)
                     max_buy_val = invest / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
@@ -157,11 +184,11 @@ def run_simulation_worker(sma_period, buy_threshold, sell_threshold, max_holding
     mdd = drawdown.min() * 100
     
     win_rate = (wins / trades_count * 100) if trades_count > 0 else 0
-    win_rate = (wins / trades_count * 100) if trades_count > 0 else 0
     return {
         'SMA': sma_period, 'Buy': buy_threshold, 'Sell': sell_threshold, 'Hold': max_holding_days, 'MaxPos': max_positions,
         'Return': ret, 'MDD': mdd, 'WinRate': win_rate, 'Trades': trades_count
     }
+
 
 def run_optimization():
     print("🚀 [RSI 3 Optimized] Loading Data (Pool=10)...")

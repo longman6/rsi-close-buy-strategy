@@ -32,7 +32,7 @@ def prepare_data_batch(tickers, start_date):
     return prepare_data(tickers, start_date, 7, 200) 
 
 def run_simulation_optimized(stock_data, valid_tickers, 
-                             max_holding_days, buy_threshold, sell_threshold, sma_window, max_positions):
+                             max_holding_days, buy_threshold, sell_threshold, sma_window, max_positions, loss_lockout_days=90):
     
     allocation_per_stock = 1.0 / max_positions
     
@@ -56,6 +56,9 @@ def run_simulation_optimized(stock_data, valid_tickers,
     trades_count = 0
     wins = 0
     
+    # Loss Lockout Dictionary: {ticker: lockout_end_date}
+    lockout_until = {}
+    
     for date in all_dates:
         # 1. Sell Logic
         current_positions_value = 0
@@ -73,7 +76,8 @@ def run_simulation_optimized(stock_data, valid_tickers,
                 pos['last_price'] = current_price
                 rsi = df.loc[date, 'RSI']
                 
-                if rsi > sell_threshold: # Signal Sell
+                # Sell Conditions (RSI >= sell_threshold)
+                if rsi >= sell_threshold: # Signal Sell
                     tickers_to_remove.append(ticker)
                 elif pos['held_bars'] >= max_holding_days: # Force Sell
                     tickers_to_remove.append(ticker)
@@ -99,24 +103,48 @@ def run_simulation_optimized(stock_data, valid_tickers,
             if net_profit > 0: wins += 1
             trades_count += 1
             
+            # Loss Lockout Logic (단순 가격 기준)
+            price_return = sell_price - pos['buy_price']
+            if price_return < 0 and loss_lockout_days > 0:
+                from datetime import timedelta
+                lockout_end = date + timedelta(days=loss_lockout_days)
+                lockout_until[ticker] = lockout_end
+
+        # 매도 후 total_equity 재계산
+        current_positions_value = sum(p['shares'] * p['last_price'] for p in positions.values())
+        total_equity = cash + current_positions_value
+            
         # 2. Buy Logic
         open_slots = max_positions - len(positions)
         if open_slots > 0:
             candidates = []
             for ticker in valid_tickers:
                 if ticker in positions: continue
+                
+                # Check Lockout
+                if ticker in lockout_until:
+                    if date <= lockout_until[ticker]:
+                        continue
+                    else:
+                        del lockout_until[ticker]
+                
                 df = stock_data[ticker]
                 if date not in df.index: continue
                 
                 row = df.loc[date]
                 if pd.isna(row['SMA_Dynamic']): continue
 
-                if row['Close'] > row['SMA_Dynamic'] and row['RSI'] < buy_threshold:
+                # 매수 조건 (RSI <= buy_threshold)
+                if row['Close'] > row['SMA_Dynamic'] and row['RSI'] <= buy_threshold:
                     candidates.append({'ticker': ticker, 'rsi': row['RSI'], 'price': row['Close']})
             
             if candidates:
                 candidates.sort(key=lambda x: x['rsi'])
                 for can in candidates[:open_slots]:
+                    # 매 매수 전 total_equity 재계산
+                    current_positions_value = sum(p['shares'] * p['last_price'] for p in positions.values())
+                    total_equity = cash + current_positions_value
+                    
                     target = total_equity * allocation_per_stock
                     invest = min(target, cash)
                     max_buy_val = invest / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
