@@ -306,11 +306,8 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 current_price = df.loc[date, 'Close']
                 pos['last_price'] = current_price
                 rsi = df.loc[date, 'RSI']
-                
-                # 보유 기간 계산 (Calendar Days로 복귀)
-                days_held = (date - pos['buy_date']).days
 
-                # 매도 조건: RSI > SELL_THRESHOLD OR Max Holding Days Reached (Trading Days)
+                # 매도 조건: RSI >= SELL_THRESHOLD OR Max Holding Days Reached (Trading Days)
                 if rsi >= sell_threshold:
                     tickers_to_sell.append({'ticker': ticker, 'reason': 'SIGNAL'})
                 elif pos['held_bars'] >= max_holding_days:
@@ -346,10 +343,15 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 'Days': pos['held_bars']
             })
             
-            # Loss Lockout Logic
-            if net_return < 0 and loss_lockout_days > 0:
+            # Loss Lockout Logic (단순 가격 기준, 수수료/세금/슬리피지 무시)
+            price_return = (sell_price - pos['buy_price']) / pos['buy_price']
+            if price_return < 0 and loss_lockout_days > 0:
                 lockout_end = date + timedelta(days=loss_lockout_days)
                 lockout_until[ticker] = lockout_end
+
+        # 매도 후 total_equity 재계산 (매수 시 최신 자산 기준 할당)
+        current_positions_value = sum(pos['shares'] * pos['last_price'] for pos in positions.values())
+        total_equity = cash + current_positions_value
 
         # 3. 매수
         # Market Filter Check
