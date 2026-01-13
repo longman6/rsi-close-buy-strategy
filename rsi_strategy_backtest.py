@@ -1,5 +1,5 @@
 #!pip install -q finance-datareader
-import yfinance as yf
+import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -65,7 +65,7 @@ def get_kosdaq150_tickers():
         import ast
         if not os.path.exists(filename):
              print(f"[오류] {filename} 파일이 없습니다. 샘플 종목을 사용합니다.")
-             return ['247540.KQ', '091990.KQ', '066970.KQ', '028300.KQ', '293490.KQ']
+             return ['247540', '091990', '066970', '028300', '293490']
 
         print(f"'{filename}'에서 종목 리스트를 읽어옵니다...")
         with open(filename, 'r', encoding='utf-8') as f:
@@ -76,7 +76,7 @@ def get_kosdaq150_tickers():
                 try:
                     # Parse dictionary string: {'code': '...', 'name': '...'}
                     data = ast.literal_eval(line)
-                    tickers.append(data['code'] + '.KQ')
+                    tickers.append(data['code']) # FDR uses code only (e.g. '000250')
                 except:
                     pass
         
@@ -85,7 +85,7 @@ def get_kosdaq150_tickers():
 
     except Exception as e:
         print(f"[주의] 파일 읽기 오류 ({e}). 샘플 종목 사용.")
-        return ['247540.KQ', '091990.KQ', '066970.KQ', '028300.KQ', '293490.KQ']
+        return ['247540', '091990', '066970', '028300', '293490']
 
 def calculate_rsi(data, window):
     delta = data.diff()
@@ -204,7 +204,6 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
                     df['Date'] = pd.to_datetime(df['Date'])
                     df.set_index('Date', inplace=True)
                 
-                # Ensure index is datetime
                 if not isinstance(df.index, pd.DatetimeIndex):
                     df.index = pd.to_datetime(df.index)
                     
@@ -221,7 +220,7 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
             # Process Indicators
             if len(df) >= sma_window + 10:
                 df['SMA'] = df['Close'].rolling(window=sma_window).mean()
-                df['RSI'] = calculate_rsi(df['Close'], window=rsi_window) # Uses Rolling Mean (SMA)
+                df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
                 
                 # Filter start_date
                 df = df[df.index >= start_dt]
@@ -232,27 +231,22 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
         else:
             tickers_to_download.append(ticker)
 
-    # 2. Download remaining if any (Bulk download is faster)
+    # 2. Download remaining if any (FinanceDataReader)
     if tickers_to_download:
-        print(f"📥 다운로드 필요 종목: {len(tickers_to_download)}개")
-        data = yf.download(tickers_to_download, start=fetch_start_date, progress=False)
+        print(f"📥 다운로드 필요 종목: {len(tickers_to_download)}개 (Source: FinanceDataReader)")
         
-        if isinstance(data.columns, pd.MultiIndex):
-            try:
-                closes = data.xs('Close', axis=1, level=0)
-            except:
-                if 'Close' in data.columns.get_level_values(0): closes = data['Close']
-                else: closes = pd.DataFrame()
-        else:
-             closes = data['Close'] if 'Close' in data.columns else data
-
         for ticker in tickers_to_download:
             try:
-                if ticker not in closes.columns: continue
-                series = closes[ticker].dropna()
-                if len(series) < sma_window + 10: continue
+                code = ticker.split('.')[0]
+                # FinanceDataReader Download
+                df = fdr.DataReader(code, fetch_start_date)
+                
+                if df is None or df.empty: continue
+                if len(df) < sma_window + 10: continue
 
-                df = series.to_frame(name='Close')
+                # FDR returns columns: Open, High, Low, Close, Volume, Change
+                # Index is Date
+                
                 df['SMA'] = df['Close'].rolling(window=sma_window).mean()
                 df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
                 df = df[df.index >= start_dt]
@@ -260,7 +254,8 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
                 stock_data[ticker] = df
                 if ticker not in valid_tickers:
                      valid_tickers.append(ticker)
-            except:
+            except Exception as e:
+                print(f"Failed to download {ticker}: {e}")
                 pass
 
     print(f"✅ 총 {len(valid_tickers)}개 종목 데이터 준비 완료.")
@@ -273,7 +268,8 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                    max_holding_days=MAX_HOLDING_DAYS, 
                    buy_threshold=BUY_THRESHOLD, 
                    sell_threshold=SELL_THRESHOLD, 
-                   max_positions=MAX_POSITIONS):
+                   max_positions=MAX_POSITIONS,
+                   loss_lockout_days=0):
     
     # Dynamic Allocation
     allocation_per_stock = 1.0 / max_positions
@@ -287,8 +283,14 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
     positions = {}
     history = []
     trades = []
+    
+    # Loss Lockout Dictionary: {ticker: lockout_end_date}
+    lockout_until = {}
 
     for date in all_dates:
+        # 0. Clean up expired lockouts
+        # This is strictly not necessary if we check date > lockout_until, but good for memory if long simulation
+        
         # 1. Update Holding Period (Trading Days)
         # Increment held_bars for all positions since we are in a valid trading day loop
         for ticker, pos in positions.items():
@@ -309,7 +311,7 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 days_held = (date - pos['buy_date']).days
 
                 # 매도 조건: RSI > SELL_THRESHOLD OR Max Holding Days Reached (Trading Days)
-                if rsi > sell_threshold:
+                if rsi >= sell_threshold:
                     tickers_to_sell.append({'ticker': ticker, 'reason': 'SIGNAL'})
                 elif pos['held_bars'] >= max_holding_days:
                     tickers_to_sell.append({'ticker': ticker, 'reason': 'FORCE'})
@@ -343,6 +345,11 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 'Reason': reason,
                 'Days': pos['held_bars']
             })
+            
+            # Loss Lockout Logic
+            if net_return < 0 and loss_lockout_days > 0:
+                lockout_end = date + timedelta(days=loss_lockout_days)
+                lockout_until[ticker] = lockout_end
 
         # 3. 매수
         # Market Filter Check
@@ -362,12 +369,20 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
             buy_candidates = []
             for ticker in valid_tickers:
                 if ticker in positions: continue
+                
+                # Check Lockout
+                if ticker in lockout_until:
+                    if date <= lockout_until[ticker]:
+                        continue
+                    else:
+                        del lockout_until[ticker] # Lockout expired
+
                 df = stock_data[ticker]
                 if date not in df.index: continue
 
                 row = df.loc[date]
-                # 매수 조건: SMA선 위 & RSI < BUY_THRESHOLD
-                if row['Close'] > row['SMA'] and row['RSI'] < buy_threshold:
+                # 매수 조건: SMA선 위 & RSI <= BUY_THRESHOLD
+                if row['Close'] > row['SMA'] and row['RSI'] <= buy_threshold:
                     buy_candidates.append({'ticker': ticker, 'rsi': row['RSI'], 'price': row['Close']})
 
             if buy_candidates:
@@ -407,11 +422,6 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
     return final_ret, mdd, win_rate, len(trades_df), hist_df, trades_df
 
 def run_backtest():
-    tickers = get_kosdaq150_tickers()
-    
-    
-    # --- Strategy 1: RSI 3, SMA 100 ---
-    print("\n>>> 전략 1 데이터 준비: RSI 3, SMA 100")
     stock_data1, valid_tickers1 = prepare_data(tickers, START_DATE, 3, 100)
     print("\n>>> 전략 1 시뮬레이션 중...")
     ret1, mdd1, win1, cnt1, hist1, trades1 = run_simulation(stock_data1, valid_tickers1, use_filter=False)
@@ -651,7 +661,8 @@ def run_comparative_backtest():
             max_holding_days=cfg['max_holding_days'],
             buy_threshold=cfg['buy_threshold'],
             sell_threshold=cfg['sell_threshold'],
-            max_positions=cfg['max_positions']
+            max_positions=cfg['max_positions'],
+            loss_lockout_days=cfg.get('loss_lockout_days', 0)
         )
         
         results.append({
@@ -684,12 +695,18 @@ def run_comparative_backtest():
     
     print(final_report)
     
-    with open("comparative_backtest_report.md", "w", encoding="utf-8") as f:
+    print(final_report)
+    
+    # Ensure directory exists
+    report_path = "reports/comparative_backtest_report.md"
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    
+    with open(report_path, "w", encoding="utf-8") as f:
         f.write("# Consolidated Backtest Report\n")
         f.write(f"Generated at: {datetime.now()}\n\n")
         f.write(final_report)
         
-    print("✅ Report saved to comparative_backtest_report.md")
+    print(f"✅ Report saved to {report_path}")
 
 if __name__ == "__main__":
     # run_backtest() 

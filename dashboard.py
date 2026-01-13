@@ -277,14 +277,14 @@ def render_dashboard():
         return
 
     # Metrics
-    col1, col2, col3, col4 = st.columns(4)
+    # Metrics
+    col1, col2, col3 = st.columns(3)
     col1.metric("Total Asset", f"{balance['total_asset']:,.0f} KRW")
     col2.metric("Max Orderable", f"{balance.get('max_buy_amt', 0):,.0f} KRW")
-    col3.metric("Cash Available", f"{balance['cash_available']:,.0f} KRW")
     
     holdings = [h for h in balance['holdings'] if int(h['hldg_qty']) > 0]
     holdings_count = len(holdings)
-    col4.metric("Positions", f"{holdings_count} / {config.MAX_POSITIONS}")
+    col3.metric("Positions", f"{holdings_count} / {config.MAX_POSITIONS}")
 
     st.divider()
     
@@ -440,106 +440,30 @@ def render_dashboard():
     
     st.divider()
 
-    # 2. Trade History (Realized Profit)
-    st.subheader("💰 Realized Profit History")
+    # 4. Bot Configuration
+    st.subheader("⚙️ Active Bot Configuration")
     
-    period = st.radio("Select Period", ["1 Week", "1 Month", "6 Months"], horizontal=True)
+    # Display Config Parameters using columns
+    c1, c2, c3 = st.columns(3)
     
-    now = get_kst_now()
-    end_date = now.strftime("%Y%m%d")
-    
-    if period == "1 Week":
-        start_date = (now - timedelta(weeks=1)).strftime("%Y%m%d")
-    elif period == "1 Month":
-        start_date = (now - timedelta(days=30)).strftime("%Y%m%d")
-    else:
-        start_date = (now - timedelta(days=180)).strftime("%Y%m%d")
-        
-    with st.spinner(f"Fetching History ({start_date} ~ {end_date})..."):
-        history = kis.get_period_trades(start_date, end_date)
-        
-    if history:
-        # history fields from inquire-daily-ccld:
-        # ord_dt, prdt_name, sll_buy_dvsn_cd (01:Sell, 02:Buy), tot_ccld_amt, tot_ccld_qty, avg_prvs
-        hist_data = []
-        for item in history:
-            # Filter only SELL (01)
-            if item.get('sll_buy_dvsn_cd') == '01':
-                name = item['prdt_name']
-                code = item.get('pdno', '') # Might be empty in some outputs
-                
-                # If code is missing, try to find it? 
-                # For now just link Name if possible or just display Name
-                
-                # Naver Link
-                if code:
-                    url = f"https://finance.naver.com/item/main.naver?code={code}"
-                    name_display = f"<a href='{url}' target='_blank'>{name}</a>"
-                else:
-                    name_display = name
+    with c1:
+        st.markdown("**Strategy Parameters**")
+        st.write(f"- **RSI Window:** `{config.RSI_WINDOW}`")
+        st.write(f"- **SMA Window:** `{config.SMA_WINDOW}` days")
+        st.write(f"- **Buy Limit:** RSI < `{config.RSI_BUY_THRESHOLD}`")
+        st.write(f"- **Sell Limit:** RSI > `{config.RSI_SELL_THRESHOLD}`")
 
-                qty = int(item.get('tot_ccld_qty', 0))
-                price = float(item.get('avg_prvs', 0))
-                amt = float(item.get('tot_ccld_amt', 0))
-                
-                hist_data.append({
-                    "Date": item.get('ord_dt'),
-                    "Name": name_display,
-                    "Type": "SELL",
-                    "Qty": qty,
-                    "Price": f"{price:,.0f}",
-                    "Amount": f"{amt:,.0f}",
-                    "Note": "P/L N/A (Checking Local)" # Info place holder
-                })
-        
-        if hist_data:
-            df_hist = pd.DataFrame(hist_data)
-            st.write(df_hist.to_html(escape=False), unsafe_allow_html=True)
-            st.caption("* KIS API 'Daily Conclusion' does not provide realized profit directly. Showing execution amounts.")
-        else:
-            st.info("No Sell records found for this period in KIS History.")
-            
-    else:
-        # Fallback to TradeManager (Local History) if KIS returns nothing (Mock Mode)
-        st.warning("⚠️ KIS Period Profit API is unavailable (likely due to Mock Investment Mode). Showing Local Trade History.")
-        
-        tm_history = trade_manager.history.get("last_trade", {})
-        if tm_history:
-            local_data = []
-            
-            # Filter by date range
-            start_int = int(start_date)
-            end_int = int(end_date)
-            
-            for code, data in tm_history.items():
-                sell_date = int(data['sell_date'])
-                if start_int <= sell_date <= end_int:
-                    # We need Name, which is not in trade_history.json usually
-                    # Fetch from KIS current price or exclusion list cache? 
-                    # Try fetch name
-                    name = code
-                    try:
-                       curr = kis.get_current_price(code)
-                       if curr: name = curr.get('hts_kor_isnm', code)
-                    except: pass
-                    
-                    url = f"https://finance.naver.com/item/main.naver?code={code}"
-                    name_display = f"<a href='{url}' target='_blank'>{name}</a>"
-
-                    local_data.append({
-                        "Date": data['sell_date'],
-                        "Name": name_display,
-                        "Code": code,
-                        "Est. Return (%)": f"{data['pnl_pct']:.2f}%"
-                    })
-            
-            if local_data:
-                 df_local = pd.DataFrame(local_data)
-                 st.write(df_local.to_html(escape=False), unsafe_allow_html=True)
-            else:
-                 st.info("No local trade history found for this period.")
-        else:
-             st.info("No local history records.")
+    with c2:
+        st.markdown("**Risk Management**")
+        st.write(f"- **Max Positions:** `{config.MAX_POSITIONS}`")
+        st.write(f"- **Max Holding:** `{config.MAX_HOLDING_DAYS}` days")
+        st.write(f"- **Loss Cooldown:** `{config.LOSS_COOLDOWN_DAYS}` days")
+    
+    with c3:
+        st.markdown("**System**")
+        st.write(f"- **Timeframe:** `Daily`")
+        st.write(f"- **Target Universe:** `KOSDAQ 150`")
+        st.write(f"- **Mode:** `{'Mock' if getattr(kis, 'is_mock', False) else 'Real'}`")
 
 def render_ai_advice_page():
     st.title("🧠 AI Advice")

@@ -1,50 +1,29 @@
 {
-    "A": {
-        "rsi_window": 10,
-        "buy_threshold": 40,
-        "sell_threshold": 70,
-        "sma_window": 50,
-        "max_holding_days": 40,
-        "max_positions": 3
-    },
-    "B": {
-        "rsi_window": 10,
-        "buy_threshold": 35,
-        "sell_threshold": 65,
-        "sma_window": 200,
-        "max_holding_days": 40,
-        "max_positions": 3
-    },
-    "C": {
-        "rsi_window": 5,
-        "buy_threshold": 35,
-        "sell_threshold": 70,
-        "sma_window": 50,
-        "max_holding_days": 40,
-        "max_positions": 5
-    },
-    "D": {
-        "rsi_window": 3,
-        "buy_threshold": 35,
-        "sell_threshold": 70,
-        "sma_window": 100,
-        "max_holding_days": 40,
-        "max_positions": 5
-    },
-    "E": {
-        "rsi_window": 3,
-        "buy_threshold": 35,
-        "sell_threshold": 75,
-        "sma_window": 100,
-        "max_holding_days": 20,
-        "max_positions": 7
-    },
-    "H": {
+    "3A": {
         "rsi_window": 3,
         "buy_threshold": 20,
+        "sell_threshold": 75,
+        "sma_window": 150,
+        "max_positions": 7,
+        "max_holding_days": 20,
+        "loss_lockout_days": 90
+    },
+    "3B": {
+        "rsi_window": 3,
+        "buy_threshold": 15,
         "sell_threshold": 80,
-        "sma_window": 50,
-        "max_holding_days": 10,
-        "max_positions": 3
+        "sma_window": 100,
+        "max_positions": 3,
+        "max_holding_days": 50,
+        "loss_lockout_days": 90
+    },
+    "5A": {
+        "rsi_window": 5,
+        "buy_threshold": 40,
+        "sell_threshold": 80,
+        "sma_window": 60,
+        "max_positions": 5,
+        "max_holding_days": 50,
+        "loss_lockout_days": 90
     }
 }

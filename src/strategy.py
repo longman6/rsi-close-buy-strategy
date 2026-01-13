@@ -86,7 +86,7 @@ class Strategy:
         if pd.isna(latest['SMA']) or pd.isna(latest['RSI']):
             return None
             
-        if latest['Close'] > latest['SMA'] and latest['RSI'] < self.rsi_buy_threshold:
+        if latest['Close'] > latest['SMA'] and latest['RSI'] <= self.rsi_buy_threshold:
             return {
                 'code': code,
                 'rsi': latest['RSI'],
@@ -107,7 +107,7 @@ class Strategy:
         if pd.isna(latest['RSI']):
             return False
             
-        if latest['RSI'] > self.rsi_sell_threshold:
+        if latest['RSI'] >= self.rsi_sell_threshold:
             return True
             
         return False
