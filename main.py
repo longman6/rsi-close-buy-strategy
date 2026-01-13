@@ -726,6 +726,7 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, 
         df = kis.get_daily_ohlcv(code, start_date=start_date)
         rsi_val = 0.0
         if not df.empty:
+             logging.inf('df*****************************')
             df = strategy.calculate_indicators(df)
             if not df.empty and 'RSI' in df.columns:
                 logging.inf('df--------------------------------')
