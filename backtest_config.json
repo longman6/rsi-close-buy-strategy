@@ -30,5 +30,21 @@
         "sma_window": 100,
         "max_holding_days": 40,
         "max_positions": 5
+    },
+    "E": {
+        "rsi_window": 3,
+        "buy_threshold": 35,
+        "sell_threshold": 75,
+        "sma_window": 100,
+        "max_holding_days": 20,
+        "max_positions": 7
+    },
+    "H": {
+        "rsi_window": 3,
+        "buy_threshold": 20,
+        "sell_threshold": 80,
+        "sma_window": 50,
+        "max_holding_days": 10,
+        "max_positions": 3
     }
 }

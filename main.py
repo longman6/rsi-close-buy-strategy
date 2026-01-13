@@ -551,7 +551,10 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
 
     orders = kis.get_outstanding_orders()
     if not orders:
+        # logging.info("No outstanding orders to monitor.")
         return
+
+    logging.info(f"🔍 Monitoring {len(orders)} outstanding orders...")
 
     # Load price strategy settings
     increment_step = config.PRICE_INCREMENT_STEP  # +0.2%
@@ -560,19 +563,40 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
 
     for ord in orders:
         code = ord['pdno']
+        order_price = float(ord['ord_unpr'])
+        
+        # Check current price first to get yesterday's close
+        curr = kis.get_current_price(code)
+        if not curr:
+            logging.warning(f"⚠️ [Monitor] Failed to get price for {code}")
+            continue
+
+        current_price = float(curr.get('stck_prpr', 0))
+        yesterday_close = float(curr.get('stck_sdpr', 0)) 
+        
+        if current_price == 0 or yesterday_close == 0:
+            continue
 
         # Find matching target in state
         target = next((t for t in state["buy_targets"] if t['code'] == code), None)
+        
+        # [Recovery Logic] If target missing (e.g. Restart), create dummy target to manage it
         if not target:
-            continue  # Not our managed target
-
-        # Check current price
-        curr = kis.get_current_price(code)
-        if not curr:
-            continue
-
-        current_price = float(curr['stck_prpr'])
-        yesterday_close = target['close_yesterday']
+            if code in state["exclude_list"]:
+                continue
+                
+            logging.info(f"⚠️ Managing Orphaned Order for {code} (Recovered from API)")
+            
+            # Fetch name from current price info if possible
+            name = curr.get('hts_kor_isnm', 'Unknown')
+            
+            target = {
+                "code": code, 
+                "name": name,
+                "close_yesterday": yesterday_close,
+                # No initial_price/time means it will hit the Fallback Logic (Chase Current Price)
+            }
+            state["buy_targets"].append(target) 
 
         # Cancel if price surged >5%
         if current_price > yesterday_close * 1.05:
@@ -581,16 +605,12 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
             telegram.send_message(f"🗑️ Cancelled {code}: Price > +5%")
             continue
 
-        # Gradual price increase logic
-        order_price = float(ord['ord_unpr'])
-
         # Determine which order this is (1st or 2nd)
         initial_price = target.get('initial_order_price')
         order_time = target.get('initial_order_time')
 
         # If this is a second order, use second order initial price
         if 'second_order_initial_price' in target:
-            # Check if this order matches second order price
             second_initial = target['second_order_initial_price']
             second_time = target.get('second_order_time')
             if abs(order_price - second_initial) < abs(order_price - initial_price):
@@ -598,13 +618,15 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
                 order_time = second_time
 
         if not initial_price or not order_time:
-            # Fallback to old logic: revise to current price
+            # Fallback Logic (Legacy/Orphaned if logic existed)
             rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
             if rem_qty > 0 and order_price != current_price:
                 kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'],
                                        rem_qty, int(current_price), is_cancel=False)
                 logging.info(f"✏️ Modified {code} -> {int(current_price):,} (Fallback Default)")
                 telegram.send_message(f"✏️ Modified {code} -> {int(current_price):,}")
+            else:
+                 logging.info(f"ℹ️ [Monitor] {code}: Fallback condition not met (P:{order_price} vs C:{current_price})")
             continue
 
         # Calculate how many intervals have passed
@@ -621,7 +643,12 @@ def monitor_and_correct_orders(kis, telegram, trade_manager):
 
         # Only revise if different from current order price
         rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
-        if rem_qty > 0 and target_price != order_price:
+        
+        # Debug Log
+        logging.info(f"[Monitor] {code}: Ord:{order_price:.0f} Cur:{current_price:.0f} Tgt:{target_price} "
+                     f"Init:{initial_price:.0f} Elast:{elapsed_time:.0f}s Inv:{intervals_passed} (+{price_increase_pct*100:.1f}%)")
+
+        if rem_qty > 0 and target_price != int(order_price):
             logging.info(
                 f"📈 Gradual increase {code}: "
                 f"{int(order_price):,} → {target_price:,} "
@@ -707,7 +734,7 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, 
         profit_amt = (curr - avg) * int(h['hldg_qty'])
         profit_pct = (curr - avg) / avg * 100
         
-        days_held = trade_manager.get_holding_days(code)
+        days_held = trade_manager.get_holding_days(code, df=df)
         
         line = f"🔹 {name}: {curr:,.0f} (RSI: {rsi_val:.2f}) | P/L: {profit_pct:.2f}% ({days_held}d) | ₩{int(profit_amt):,}"
         
@@ -762,7 +789,7 @@ def run_sell_check(kis, telegram, strategy, trade_manager):
 
         df = strategy.calculate_indicators(df)
         
-        forced_sell = trade_manager.check_forced_sell(code)
+        forced_sell = trade_manager.check_forced_sell(code, df=df)
         
         if strategy.check_sell_signal(code, df) or forced_sell:
              reason = "Forced (Max Holding)" if forced_sell else "Signal"
@@ -791,7 +818,7 @@ def run_sell_execution(kis, telegram, strategy, trade_manager):
         df = strategy.calculate_indicators(df)
         
         # Check RSI > 70 or Forced Sell
-        forced_sell = trade_manager.check_forced_sell(code)
+        forced_sell = trade_manager.check_forced_sell(code, df=df)
         
         if strategy.check_sell_signal(code, df) or forced_sell:
              reason = "Forced" if forced_sell else "Signal"

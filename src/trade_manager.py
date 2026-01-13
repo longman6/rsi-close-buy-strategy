@@ -3,6 +3,7 @@ import os
 import logging
 import pytz
 from datetime import datetime
+import pandas as pd
 import config
 
 HISTORY_FILE = "data/trade_history.json"
@@ -66,8 +67,12 @@ class TradeManager:
             # Simplified: just save pct for now as passed.
             self.db.save_trade_record(db_date, code, name, "SELL", float(price), int(qty), pnl_pct=float(pnl_pct))
 
-    def get_holding_days(self, code, current_date_str=None):
-        """Calculate how many days held."""
+    def get_holding_days(self, code, current_date_str=None, df=None):
+        """
+        Calculate how many days held.
+        If df (DataFrame with DatetimeIndex) is provided, calculate number of trading days.
+        Else, calculate calendar days.
+        """
         # If unknown, treat as 0 days held (Do NOT Force Sell)
         if code not in self.history["holdings"]:
             return 0
@@ -76,7 +81,37 @@ class TradeManager:
         if not buy_date_str:
              return 0
         
-        # If current_date not passed, use today KST
+        # 1. Trading Days Calculation (Preferred)
+        if df is not None and not df.empty:
+            try:
+                # Expecting df.index to be DatetimeIndex
+                # buy_date_str is 'YYYYMMDD'
+                buy_dt = pd.to_datetime(buy_date_str)
+                
+                # Count bars strictly AFTER buy date
+                # Support both DatetimeIndex and 'Date' column
+                if isinstance(df.index, pd.DatetimeIndex):
+                    trading_days = df[df.index > buy_dt]
+                elif 'Date' in df.columns:
+                    # Ensure Date column is datetime
+                    if not pd.api.types.is_datetime64_any_dtype(df['Date']):
+                        df['Date'] = pd.to_datetime(df['Date'])
+                    trading_days = df[df['Date'] > buy_dt]
+                else:
+                    # Fallback or invalid DF structure
+                    logging.warning(f"[TradeManager] DF has no Date index or column for {code}")
+                    return 0 # Fallback to 0 or calendar days? Let's fallback to calendar days logic below if this returns 0? 
+                    # Actually structure implies we return len. 
+                    # If we return 0 here, it might be misleading. 
+                    # Raise exception to trigger fallback in except block?
+                    raise ValueError("No Date information in DataFrame")
+                    
+                return len(trading_days)
+            except Exception as e:
+                logging.error(f"[TradeManager] DF Date Calc Error ({code}): {e}")
+                # Fallback to calendar days
+        
+        # 2. Calendar Days Calculation (Fallback)
         if not current_date_str:
             tz_kst = pytz.timezone('Asia/Seoul')
             current_date_str = datetime.now(pytz.utc).astimezone(tz_kst).strftime("%Y%m%d")
@@ -90,14 +125,14 @@ class TradeManager:
             logging.error(f"[TradeManager] Date Calc Error ({code}): {e}")
             return 0
 
-    def check_forced_sell(self, code):
+    def check_forced_sell(self, code, df=None):
         """
         Check if stock exceeded MAX_HOLDING_DAYS.
         Returns True if forced sell is needed.
         """
-        days_held = self.get_holding_days(code)
+        days_held = self.get_holding_days(code, df=df)
         if days_held > config.MAX_HOLDING_DAYS:
-            logging.info(f"[TradeManager] {code} Held {days_held} days > Max {config.MAX_HOLDING_DAYS}. Force Sell.")
+            logging.info(f"[TradeManager] {code} Held {days_held} days (Trading Days) > Max {config.MAX_HOLDING_DAYS}. Force Sell.")
             return True
         return False
 

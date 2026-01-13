@@ -76,6 +76,10 @@ def run_simulation_worker(rsi_period, sma_period, buy_threshold, sell_threshold,
     for date in all_dates:
         # 1. Sell Logic
         current_positions_value = 0
+        # Increment held_bars (Trading Days)
+        for ticker, pos in positions.items():
+            pos['held_bars'] += 1
+
         tickers_to_remove = []
 
         for ticker, pos in positions.items():
@@ -85,11 +89,9 @@ def run_simulation_worker(rsi_period, sma_period, buy_threshold, sell_threshold,
                 pos['last_price'] = current_price
                 
                 rsi = df.loc[date, rsi_col]
-                days_held = (date - pos['buy_date']).days
-                
                 if rsi > sell_threshold:
                     tickers_to_remove.append(ticker)
-                elif days_held >= max_holding_days:
+                elif pos['held_bars'] >= max_holding_days:
                     tickers_to_remove.append(ticker)
             else:
                 current_price = pos['last_price']
@@ -141,7 +143,8 @@ def run_simulation_worker(rsi_period, sma_period, buy_threshold, sell_threshold,
                          cash -= (buy_val + buy_val * (TX_FEE_RATE + SLIPPAGE_RATE))
                          positions[can['ticker']] = {
                              'shares': shares, 'buy_price': can['price'],
-                             'last_price': can['price'], 'buy_date': date
+                             'last_price': can['price'], 'buy_date': date,
+                             'held_bars': 0
                          }
 
     # Final Stats

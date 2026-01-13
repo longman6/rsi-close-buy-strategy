@@ -91,15 +91,18 @@ def calculate_rsi(data, window):
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).fillna(0)
     loss = (-delta.where(delta < 0, 0)).fillna(0)
-    avg_gain = gain.ewm(com=window - 1, min_periods=window).mean()
-    avg_loss = loss.ewm(com=window - 1, min_periods=window).mean()
+    
+    # Use SMA (Rolling Mean) instead of Wilder's Smoothing (EWM)
+    # This matches the logic used in 'optimize_all_dense.py' which yielded superior results.
+    avg_gain = gain.rolling(window=window).mean()
+    avg_loss = loss.rolling(window=window).mean()
+    
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
 def prepare_data(tickers, start_date, rsi_window, sma_window):
     # SMA 계산을 위한 충분한 데이터 확보 (약 6개월 전부터 로드)
-    # start_date may be string or datetime
     if isinstance(start_date, str):
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     else:
@@ -107,50 +110,162 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
         
     fetch_start_date = (start_dt - timedelta(days=200)).strftime("%Y-%m-%d")
     
-    print(f"[{len(tickers)}개 종목] 데이터 다운로드 ({fetch_start_date}~) 및 지표 계산...")
-    data = yf.download(tickers, start=fetch_start_date, progress=True)
-
+def prepare_data(tickers, start_date, rsi_window, sma_window):
+    # SMA 계산을 위한 충분한 데이터 확보 (약 6개월 전부터 로드)
+    if isinstance(start_date, str):
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    else:
+        start_dt = start_date
+        
+    fetch_start_date = (start_dt - timedelta(days=200)).strftime("%Y-%m-%d")
+    
+    print(f"[{len(tickers)}개 종목] 데이터 준비 (PKL/로컬 최우선)...")
+    
     stock_data = {}
     valid_tickers = []
-
-    if isinstance(data.columns, pd.MultiIndex):
+    
+    # 0. Check for Consolidated Pickle
+    import glob
+    historical_dir = 'data/historical'
+    pkl_files = glob.glob(os.path.join(historical_dir, "kosdaq150_combined_*.pkl"))
+    
+    loaded_from_pkl = False
+    
+    if pkl_files:
+        # Use the latest one if multiple? Just take first for now.
+        pkl_path = pkl_files[0] 
+        print(f"📂 통합 데이터 로드 중: {pkl_path}")
         try:
-            closes = data.xs('Close', axis=1, level=0)
-        except:
-            if 'Close' in data.columns.get_level_values(0): closes = data['Close']
-            else: return {}, []
-    else:
-        closes = data['Close'] if 'Close' in data.columns else data
-
-    for ticker in tickers:
-        try:
-            if ticker not in closes.columns: continue
-            series = closes[ticker].dropna()
-
-            # SMA 계산을 위해 충분한 데이터가 있는지 확인
-            if len(series) < sma_window + 10: continue
-
-            df = series.to_frame(name='Close')
-
-            # [지표 계산]
-            df['SMA'] = df['Close'].rolling(window=sma_window).mean()
-            df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
+            combined_data = pd.read_pickle(pkl_path)
+            loaded_from_pkl = True
             
-            # [기간 필터링] 지표 계산 후, 사용자가 요청한 start_date 이후 데이터만 남김
-            df = df[df.index >= start_dt]
+            # combined_data is dict: {'000250': df, ...}
+            # Need to map to requested tickers
+            for ticker in tickers:
+                code = ticker.split('.')[0]
+                if code in combined_data:
+                    df = combined_data[code]
+                    
+                    # Ensure formatting
+                    if 'Date' in df.columns:
+                        df['Date'] = pd.to_datetime(df['Date'])
+                        df.set_index('Date', inplace=True)
+                        
+                    if not isinstance(df.index, pd.DatetimeIndex):
+                         df.index = pd.to_datetime(df.index)
+                    
+                    df.sort_index(inplace=True)
+                    df = df[df.index >= fetch_start_date]
+                    
+                    if not df.empty and len(df) >= sma_window + 10:
+                        df['SMA'] = df['Close'].rolling(window=sma_window).mean()
+                        df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
+                        df = df[df.index >= start_dt]
+                        
+                        stock_data[ticker] = df # Store with full ticker name
+                        valid_tickers.append(ticker)
+                        
+        except Exception as e:
+            print(f"❌ Pickle Load Error: {e}")
+            loaded_from_pkl = False
 
-            df.dropna(inplace=True)
+    if loaded_from_pkl:
+        print(f"✅ 통합 데이터 로드 완료: {len(valid_tickers)}개 종목 (Source: {pkl_files[0]})")
+        return stock_data, valid_tickers
 
-            if not df.empty:
+
+    # 1. Attempt to load from data/historical CSVs if PKL failed or incomplete
+    local_files = glob.glob(os.path.join(historical_dir, "*.csv"))
+    code_to_file = {}
+    for fpath in local_files:
+        basename = os.path.basename(fpath)
+        # Expecting format '000250_Name.csv'
+        parts = basename.split('_')
+        if len(parts) >= 2:
+            code = parts[0]
+            code_to_file[code] = fpath
+
+    # Check which tickers need downloading
+    tickers_to_download = []
+    
+    for ticker in tickers:
+        # Ticker format '000250.KQ' -> code '000250'
+        code = ticker.split('.')[0]
+        
+        df = None
+        if code in code_to_file:
+            try:
+                # Load local
+                fpath = code_to_file[code]
+                df = pd.read_csv(fpath)
+                
+                # Standardize columns
+                if 'Date' in df.columns:
+                    df['Date'] = pd.to_datetime(df['Date'])
+                    df.set_index('Date', inplace=True)
+                
+                # Ensure index is datetime
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    df.index = pd.to_datetime(df.index)
+                    
+                df.sort_index(inplace=True)
+                
+                # Filter for fetch_start_date
+                df = df[df.index >= fetch_start_date]
+                
+            except Exception as e:
+                print(f"Failed to load local {fpath}: {e}")
+                df = None
+        
+        if df is not None and not df.empty:
+            # Process Indicators
+            if len(df) >= sma_window + 10:
+                df['SMA'] = df['Close'].rolling(window=sma_window).mean()
+                df['RSI'] = calculate_rsi(df['Close'], window=rsi_window) # Uses Rolling Mean (SMA)
+                
+                # Filter start_date
+                df = df[df.index >= start_dt]
+                
                 stock_data[ticker] = df
-                valid_tickers.append(ticker)
-        except: pass
+                if ticker not in valid_tickers:
+                    valid_tickers.append(ticker)
+        else:
+            tickers_to_download.append(ticker)
 
+    # 2. Download remaining if any (Bulk download is faster)
+    if tickers_to_download:
+        print(f"📥 다운로드 필요 종목: {len(tickers_to_download)}개")
+        data = yf.download(tickers_to_download, start=fetch_start_date, progress=False)
+        
+        if isinstance(data.columns, pd.MultiIndex):
+            try:
+                closes = data.xs('Close', axis=1, level=0)
+            except:
+                if 'Close' in data.columns.get_level_values(0): closes = data['Close']
+                else: closes = pd.DataFrame()
+        else:
+             closes = data['Close'] if 'Close' in data.columns else data
+
+        for ticker in tickers_to_download:
+            try:
+                if ticker not in closes.columns: continue
+                series = closes[ticker].dropna()
+                if len(series) < sma_window + 10: continue
+
+                df = series.to_frame(name='Close')
+                df['SMA'] = df['Close'].rolling(window=sma_window).mean()
+                df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
+                df = df[df.index >= start_dt]
+                
+                stock_data[ticker] = df
+                if ticker not in valid_tickers:
+                     valid_tickers.append(ticker)
+            except:
+                pass
+
+    print(f"✅ 총 {len(valid_tickers)}개 종목 데이터 준비 완료.")
     return stock_data, valid_tickers
 
-# ---------------------------------------------------------
-# 4. 시뮬레이션 엔진
-# ---------------------------------------------------------
 # ---------------------------------------------------------
 # 4. 시뮬레이션 엔진
 # ---------------------------------------------------------
@@ -174,7 +289,12 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
     trades = []
 
     for date in all_dates:
-        # 1. 평가 및 매도
+        # 1. Update Holding Period (Trading Days)
+        # Increment held_bars for all positions since we are in a valid trading day loop
+        for ticker, pos in positions.items():
+            pos['held_bars'] += 1
+
+        # 2. 평가 및 매도
         current_positions_value = 0
         tickers_to_sell = []
 
@@ -185,13 +305,13 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 pos['last_price'] = current_price
                 rsi = df.loc[date, 'RSI']
                 
-                # 보유 기간 계산
+                # 보유 기간 계산 (Calendar Days로 복귀)
                 days_held = (date - pos['buy_date']).days
 
-                # 매도 조건: RSI > SELL_THRESHOLD OR Max Holding Days Reached
+                # 매도 조건: RSI > SELL_THRESHOLD OR Max Holding Days Reached (Trading Days)
                 if rsi > sell_threshold:
                     tickers_to_sell.append({'ticker': ticker, 'reason': 'SIGNAL'})
-                elif days_held >= max_holding_days:
+                elif pos['held_bars'] >= max_holding_days:
                     tickers_to_sell.append({'ticker': ticker, 'reason': 'FORCE'})
 
             else:
@@ -221,10 +341,10 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 'Return': net_return, 
                 'Date': date,
                 'Reason': reason,
-                'Days': (date - pos['buy_date']).days
+                'Days': pos['held_bars']
             })
 
-        # 2. 매수
+        # 3. 매수
         # Market Filter Check
         market_condition_ok = True
         if use_filter and market_data is not None:
@@ -266,7 +386,8 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                         positions[candidate['ticker']] = {
                             'shares': shares, 'buy_price': candidate['price'],
                             'last_price': candidate['price'],
-                            'buy_date': date
+                            'buy_date': date,
+                            'held_bars': 0 # Initialize holding period counter (trading days)
                         }
 
     # 결과 정리

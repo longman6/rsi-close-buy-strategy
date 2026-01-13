@@ -627,7 +627,24 @@ class KISClient:
         # Let's use 'inquire-daily-ccld' (Daily Conclusion/Unfilled)
         
         
-        # Use KST for Today
+    def get_outstanding_orders(self):
+        """
+        Fetch unfilled (outstanding) orders.
+        Real: TTTC8001R (Daily Conclusion - Unfilled)
+        Mock: Not Supported (API returns 90000000 or empty data)
+        """
+        if self.is_mock:
+            # [Mock Environment] 
+            # VTTC8036R returns "Not Supported" (Code 90000000).
+            # VTTC8001R returns empty data for unfilled orders.
+            # To prevent errors, we skip this feature in Mock.
+            logging.warning("[KIS] 'get_outstanding_orders' is NOT supported in Mock Investment. Skipping.")
+            return []
+
+        # [Real Environment] Use inquire-daily-ccld
+        path = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+        tr_id = "TTTC8001R"
+        
         tz_kst = pytz.timezone('Asia/Seoul')
         today_str = datetime.now(pytz.utc).astimezone(tz_kst).strftime("%Y%m%d")
         
@@ -636,21 +653,64 @@ class KISClient:
             "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
             "INQR_STRT_DT": today_str,
             "INQR_END_DT": today_str,
-            "SLL_BUY_DVSN_CD": "00", # All
-            "INQR_DVSN": "00", # 00: Order order
+            "SLL_BUY_DVSN_CD": "00", 
+            "INQR_DVSN": "00", 
             "PDNO": "",
-            "CCLD_DVSN": "02", # 02: Unfilled
             "ORD_GNO_BRNO": "",
-            "PCOD": "",
             "CTX_AREA_FK100": "",
-            "CTX_AREA_NK100": ""
+            "CTX_AREA_NK100": "",
+            "CCLD_DVSN": "02", # Unfilled Only
+            "ODNO": "",
+            "INQR_DVSN_1": "",
+            "INQR_DVSN_2": "",
+            "INQR_DVSN_3": ""
         }
-        
+        res_key = 'output1' # 8001R returns 'output1'
+
         res = self._send_request("GET", path, tr_id, params=params)
+        
         if res and res.status_code == 200:
             data = res.json()
             if data['rt_cd'] == '0':
-                return data['output1'] # List of orders
+                raw_list = data.get(res_key, [])
+                normalized = []
+                for item in raw_list:
+                    # Filter for Mock (8036R returns available for cancel, so effectively outstanding)
+                    # No extra filtering needed for 8036R usually.
+                    
+                    # Normalize keys for main.py compatibility
+                    norm = item.copy() 
+                    
+                    # Map Keys
+                    # 1. Order No (Target for Cancel)
+                    norm['orgn_odno'] = item.get('odno') 
+                    
+                    # 2. Org No (Branch)
+                    norm['krx_fwdg_ord_orgno'] = item.get('ord_gno_brno', '')
+                    
+                    # 3. Numeric Fields
+                    if 'ord_unpr' not in norm: norm['ord_unpr'] = item.get('ord_unpr', '0')
+                    
+                    # Qty Handling
+                    # 8036R has 'rmnd_qty', 8001R has 'ord_qty' - 'tot_ccld_qty'
+                    if 'rmnd_qty' in item:
+                         rem = item['rmnd_qty']
+                         norm['ord_qty'] = rem # Treat remaining as order qty for logic
+                         norm['ccld_qty'] = '0'
+                    else:
+                        ord_q = int(item.get('ord_qty', 0))
+                        ccld_q = int(item.get('tot_ccld_qty', 0))
+                        norm['ord_qty'] = str(ord_q)
+                        norm['ccld_qty'] = str(ccld_q)
+
+                    normalized.append(norm)
+                    
+                return normalized
+            else:
+                logging.error(f"[KIS] {tr_id} Error: {data['msg1']} (Code: {data['msg_cd']})")
+        else:
+             logging.error(f"[KIS] 8001R Request Failed: {res.status_code if res else 'None'} | {res.text if res else ''}")
+
         return []
 
     def revise_cancel_order(self, org_no, order_no, qty, price, is_cancel=False, order_type="00"):
