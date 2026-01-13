@@ -729,7 +729,6 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, 
             df = strategy.calculate_indicators(df)
             if not df.empty and 'RSI' in df.columns:
                 rsi_val = df['RSI'].iloc[-1]
-                logging.info(f"rsi_val  :{rsi_val}")
 
         
         # Profit
