@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-
+import logging
 import config
 
 class Strategy:
@@ -37,11 +37,8 @@ class Strategy:
         df must have 'Close' column.
         Returns df with 'RSI' and 'SMA' columns.
         """
-        if len(df) < self.sma_window:
-            return df
-        
-        # SMA
-        df['SMA'] = df['Close'].rolling(window=self.sma_window).mean()
+        # SMA (데이터 부족 시 상장일 전체 기간으로 계산, min_periods=20)
+        df['SMA'] = df['Close'].rolling(window=self.sma_window, min_periods=20).mean()
         
         # RSI
         delta = df['Close'].diff()
