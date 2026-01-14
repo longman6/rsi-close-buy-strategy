@@ -65,7 +65,7 @@ strategy 5A:
 
 
 
-ython3 scripts/run_single_strategy.py --strategy 3A --start-date 2010-01-01 --end-date 2025-12-31
+python3 scripts/run_single_strategy.py --strategy 3A --start-date 2010-01-01 --end-date 2025-12-31
 
  Bash(python3 scripts/run_single_strategy.py --strategy 3A --start-date 2010-01-01 --end-date 2025-12-31)                                                                   
   ⎿  Running in the background (↓ to manage)                                                                                                                                 
@@ -94,3 +94,38 @@ ython3 scripts/run_single_strategy.py --strategy 3A --start-date 2010-01-01 --en
 | **3A** | **657.18%** | -43.17% | 62.23% | 2875 | 3 / 20-75 | 150 | 20d | 7 |
 | **3B** | **1111.35%** | -63.82% | 63.19% | 1149 | 3 / 15-80 | 100 | 50d | 3 |
 | **5A** | **1508.78%** | -45.54% | 62.96% | 972 | 5 / 40-80 | 60 | 50d | 5 |
+
+
+
+Return Metrics:          
+  Total Return:                           531.32%
+  Annualized Return (CAGR):                16.32%
+
+
+1. Lockout 조건 (< 0) 관점에서 수정 
+2. 포지션 가치 
+
+for candidate in buy_candidates[:open_slots]:
+    # 매 매수 전에 현재 포지션 가치 + 현금으로 total_equity 재계산
+    current_positions_value = sum(
+        pos['shares'] * pos['last_price'] for pos in positions.values()
+    )
+    total_equity = cash + current_positions_value
+    target_amt = total_equity * allocation_per_stock
+    invest_amt = min(target_amt, cash)
+    # ... 나머지 로직 동일 ...
+
+
+
+
+아래처럼 수정해줘 .
+for date in all_dates:
+    # 2. 평가 및 매도 (먼저!)
+    # ... 매도 로직 ...
+    
+    # 3. 매수 (기존 위치)
+    # ... 매수 로직 ...
+    
+    # 4. 마지막에 held_bars 증가
+    for ticker, pos in positions.items():
+        pos['held_bars'] += 1

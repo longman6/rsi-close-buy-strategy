@@ -198,11 +198,12 @@ def run_optimization():
     # Parameter Grid (RSI 3 Fixed)
     # Trying variety of SMAs and Buy/Sell thresholds
     # Adjusted Parameters for reasonable runtime (~2600 combinations)
-    sma_periods = [30, 50, 60, 100, 120, 200]
-    buy_thresholds = [5, 10, 15, 20, 25, 30]
-    sell_thresholds = [60, 70, 80]
-    max_holdings = [5, 10, 15, 20, 30, 50]
-    max_positions_list = [3, 5, 10, 20] # Variable Max Positions
+    # Denser Parameter Grid (Within User Constraints)
+    sma_periods = list(range(30, 151, 10)) # 30, 40, ... 150
+    buy_thresholds = list(range(20, 34, 1)) # 20, 21, ... 33
+    sell_thresholds = list(range(60, 81, 2)) # 60, 62, ... 80
+    max_holdings = list(range(10, 51, 5)) # 10, 15, ... 50
+    max_positions_list = [3, 5, 7, 10, 12, 15, 17, 20]
     
     combinations = list(itertools.product(sma_periods, buy_thresholds, sell_thresholds, max_holdings, max_positions_list))
     # worker args: (sma, buy, sell, hold, max_positions)

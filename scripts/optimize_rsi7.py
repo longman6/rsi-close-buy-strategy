@@ -8,6 +8,8 @@ import numpy as np
 import os
 import itertools
 from datetime import datetime, timedelta
+import time
+from multiprocessing import Pool, cpu_count, freeze_support
 
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -22,33 +24,34 @@ TX_FEE_RATE = 0.00015
 TAX_RATE = 0.0020
 SLIPPAGE_RATE = 0.001
 
+# Global variable for worker processes
+worker_stock_data = {}
+worker_valid_tickers = []
+
+def init_worker(stock_data, valid_tickers):
+    global worker_stock_data, worker_valid_tickers
+    worker_stock_data = stock_data
+    worker_valid_tickers = valid_tickers
+
 def prepare_data_batch(tickers, start_date):
     """Reuse logic but optimized for batch processing"""
     # RSI window 7, max SMA 200
-    # Just reuse existing logic for simplicity, though slightly inefficient (re-downloads)
-    # Ideally should cache. For this script, let's assume valid data fetching.
     from rsi_strategy_backtest import prepare_data
-    # We need max SMA window to determine fetch date. Let's use 200 as max possible.
     return prepare_data(tickers, start_date, 7, 200) 
 
-def run_simulation_optimized(stock_data, valid_tickers, 
-                             max_holding_days, buy_threshold, sell_threshold, sma_window, max_positions, loss_lockout_days=90):
+def run_simulation_worker(sma_window, buy_threshold, sell_threshold, max_holding_days, max_positions, loss_lockout_days=90):
+    stock_data = worker_stock_data
+    valid_tickers = worker_valid_tickers
     
     allocation_per_stock = 1.0 / max_positions
     
-    # Pre-calculate indicators for valid tickers based on current SMA window
-    # Note: stock_data already has SMA and RSI based on initial call args (RSI 5, SMA 200).
-    # IF we vary RSI or SMA, we must re-calculate columns dynamically.
-    
-    # Since we are varying SMA, we need to recalc SMA column.
-    # RSI is fixed at 5, so that's fine.
-    
+    # Local Data Optimization
+    local_data = {}
     for ticker, df in stock_data.items():
-        daily_close = df['Close']
-        df['SMA_Dynamic'] = daily_close.rolling(window=sma_window).mean()
-        # Ensure RSI 5 is accurate (it should be from prepare_data call)
-        # We assume prepare_data was called with rsi_window=5.
-
+        d = df[['Close', 'RSI']].copy()
+        d['SMA_Dynamic'] = d['Close'].rolling(window=sma_window).mean()
+        local_data[ticker] = d
+        
     all_dates = sorted(list(set().union(*[df.index for df in stock_data.values()])))
     cash = INITIAL_CAPITAL
     positions = {}
@@ -70,7 +73,7 @@ def run_simulation_optimized(stock_data, valid_tickers,
         tickers_to_remove = []
 
         for ticker, pos in positions.items():
-            df = stock_data[ticker]
+            df = local_data[ticker]
             if date in df.index:
                 current_price = df.loc[date, 'Close']
                 pos['last_price'] = current_price
@@ -92,7 +95,7 @@ def run_simulation_optimized(stock_data, valid_tickers,
         for ticker in tickers_to_remove:
             pos = positions.pop(ticker)
             # Sell execution logic simplified
-            sell_price = stock_data[ticker].loc[date, 'Close']
+            sell_price = local_data[ticker].loc[date, 'Close']
             sell_amt = pos['shares'] * sell_price
             cost = sell_amt * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
             cash += (sell_amt - cost)
@@ -128,12 +131,12 @@ def run_simulation_optimized(stock_data, valid_tickers,
                     else:
                         del lockout_until[ticker]
                 
-                df = stock_data[ticker]
+                df = local_data[ticker]
                 if date not in df.index: continue
                 
                 row = df.loc[date]
                 if pd.isna(row['SMA_Dynamic']): continue
-
+                
                 # 매수 조건 (RSI <= buy_threshold)
                 if row['Close'] > row['SMA_Dynamic'] and row['RSI'] <= buy_threshold:
                     candidates.append({'ticker': ticker, 'rsi': row['RSI'], 'price': row['Close']})
@@ -171,72 +174,76 @@ def run_simulation_optimized(stock_data, valid_tickers,
     mdd = drawdown.min() * 100
     
     win_rate = (wins / trades_count * 100) if trades_count > 0 else 0
-    return ret, mdd, win_rate, trades_count
+    return {
+        'SMA': sma_window, 'Buy': buy_threshold, 'Sell': sell_threshold, 'Hold': max_holding_days, 'MaxPos': max_positions,
+        'Return': ret, 'MDD': mdd, 'WinRate': win_rate, 'Trades': trades_count
+    }
 
 def run_optimization():
-    print("🚀 Loading Data...")
+    print("🚀 [RSI 7 Optimized] Loading Data (Pool=10)...")
     tickers = get_kosdaq150_tickers()
     # Pre-load data with max requirements (RSI 7, SMA 200)
     stock_data, valid_tickers = prepare_data_batch(tickers, START_DATE)
     
     # Grid Search Space (Dense) - Adjusted for RSI 7
     # RSI 7 is smoother, so buy threshold might need to be higher (25~45)
-    sma_periods = [20, 50, 60, 100, 120, 200]
-    buy_thresholds = [20, 25, 30, 35, 40, 45] # Shifted higher for RSI 7
-    sell_thresholds = [60, 65, 70, 75, 80]
-    max_holdings = [5, 10, 20, 40]
-    # Fixed
-    max_positions = 5
+    # Denser Parameter Grid (Within User Constraints)
+    sma_periods = list(range(30, 151, 10)) # 30, 40, ... 150
+    buy_thresholds = list(range(20, 34, 1)) # 20, 21, ... 33
+    sell_thresholds = list(range(60, 81, 2)) # 60, 62, ... 80
+    max_holdings = list(range(10, 51, 5)) # 10, 15, ... 50
+    max_positions_list = [3, 5, 7, 10, 12, 15, 17, 20]
     
-    combinations = list(itertools.product(sma_periods, buy_thresholds, sell_thresholds, max_holdings))
+    combinations = list(itertools.product(sma_periods, buy_thresholds, sell_thresholds, max_holdings, max_positions_list))
     total_tests = len(combinations)
+    cpu_n = 12 # Requested by User
     
-    print(f"\n🔍 Starting Dense Optimization for RSI 7... ({total_tests} combinations)")
+    print(f"🧪 Total Combinations (RSI 7): {total_tests} | Cores: {cpu_n}")
     
-    results = []
-    for i, (sma, buy, sell, hold) in enumerate(combinations):
-        if i % 50 == 0: print(f"Processing... {i}/{total_tests}")
+    start_time = time.time()
+    
+    # worker args: (sma, buy, sell, hold, max_positions)
+    work_args = [(c[0], c[1], c[2], c[3], c[4]) for c in combinations]
+    
+    with Pool(processes=cpu_n, initializer=init_worker, initargs=(stock_data, valid_tickers)) as pool:
+        results = pool.starmap(run_simulation_worker, work_args)
         
-        ret, mdd, win, count = run_simulation_optimized(
-            stock_data, valid_tickers, hold, buy, sell, sma, max_positions
-        )
-        
-        results.append({
-            'SMA': sma, 'Buy': buy, 'Sell': sell, 'Hold': hold,
-            'Return': ret, 'MDD': mdd, 'Win': win, 'Trades': count
-        })
-        
-    # To DataFrame
+    elapsed = time.time() - start_time
+    print(f"✅ Optimization Complete in {elapsed/60:.2f} mins!")
+    
+    # Save Results
     df = pd.DataFrame(results)
     df = df.sort_values(by='Return', ascending=False)
     
-    top_10 = df.head(10)
-    print("\n🏆 Top 10 Configurations (RSI 7):")
+    # Filter for meaningful trades
+    df_filtered = df[df['Trades'] > 10]
+    
+    output_csv = "reports/rsi7_extended_opt_results.csv"
+    df.to_csv(output_csv, index=False)
+    
+    top_10 = df_filtered.head(10)
+    print("\n🏆 Top 10 Configurations (Trades > 10):")
     print(top_10.to_markdown(index=False, floatfmt=".2f"))
     
-    # Save to CSV
-    csv_file = "reports/rsi7_optimization_results.csv" # Save directly to reports
-    df.to_csv(csv_file, index=False)
-    print(f"\n✅ All results saved to {csv_file}")
-    
-    # Generate MD Report
+    # Report MD
     md_report = f"""
-# RSI 7 Strategy Optimization Results
-Generated: {datetime.now()}
+# RSI 7 Extended Optimization Results
+Generated: {datetime.now()} | Cores: {cpu_n}
 
 ## Top 10 Performers
 {top_10.to_markdown(index=False, floatfmt=".2f")}
 
-## Best Stable Strategy (MDD > -40% & Highest Return)
+## Best Stable Strategy (MDD > -40%)
 """
-    stable_df = df[df['MDD'] > -40].sort_values(by='Return', ascending=False)
+    stable_df = df_filtered[df_filtered['MDD'] > -40].sort_values(by='Return', ascending=False)
     if not stable_df.empty:
         md_report += stable_df.head(5).to_markdown(index=False, floatfmt=".2f")
     else:
-        md_report += "No strategy met MDD > -40% criteria."
+        md_report += "No stable strategy found."
         
-    with open("reports/rsi7_optimization_report.md", "w") as f: # Save directly to reports
+    with open("reports/rsi7_parallel_report.md", "w") as f: # Save directly to reports
         f.write(md_report)
 
 if __name__ == "__main__":
+    freeze_support()
     run_optimization()

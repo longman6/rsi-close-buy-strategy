@@ -185,11 +185,12 @@ def run_optimization():
     
     # Parameter Grid (RSI 5 Fixed)
     # Adjusted Parameters for reasonable runtime (~4000 combinations)
-    sma_periods = [30, 50, 60, 100, 120, 200]
-    buy_thresholds = [15, 20, 25, 30, 35, 40]
-    sell_thresholds = [60, 70, 80]
-    max_holdings = [5, 10, 20, 30, 40, 50]
-    max_positions_list = [3, 5, 10, 20] # Variable Max Positions
+    # Denser Parameter Grid (Within User Constraints)
+    sma_periods = list(range(30, 151, 10)) # 30, 40, ... 150
+    buy_thresholds = list(range(20, 34, 1)) # 20, 21, ... 33
+    sell_thresholds = list(range(60, 81, 2)) # 60, 62, ... 80
+    max_holdings = list(range(10, 51, 5)) # 10, 15, ... 50
+    max_positions_list = [3, 5, 7, 10, 12, 15, 17, 20]
     
     combinations = list(itertools.product(sma_periods, buy_thresholds, sell_thresholds, max_holdings, max_positions_list))
     
