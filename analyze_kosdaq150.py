@@ -194,9 +194,12 @@ def analyze_kosdaq150():
                          recent_df = df.tail(30)
                          ohlcv_text = recent_df[['Open', 'High', 'Low', 'Close', 'Volume', 'RSI', 'SMA']].to_string()
 
+                         # 확장 지표 계산
+                         extended_indicators = strategy.calculate_extended_indicators(df)
+
                          # Ask AI Manager (All Enabled Models)
                          logging.info(f"🤖 Asking AIs about {name}...")
-                         advice_list = ai_manager.get_aggregated_advice(name, code, rsi_val, ohlcv_text)
+                         advice_list = ai_manager.get_aggregated_advice(name, code, rsi_val, ohlcv_text, extended_indicators=extended_indicators)
                          
                          # Save individual advice to ai_advice table
                          for advice in advice_list:

@@ -78,7 +78,7 @@ class AIManager:
 
         logging.info(f"AI Manager Initialized with {len(self.clients)} clients: {[c['name'] for c in self.clients]}")
 
-    def get_aggregated_advice(self, name: str, code: str, rsi: float, ohlcv_text: str = "") -> List[Dict]:
+    def get_aggregated_advice(self, name: str, code: str, rsi: float, ohlcv_text: str = "", extended_indicators: dict = None) -> List[Dict]:
         """
         Polls all enabled AI clients for advice.
         Returns a list of results: 
@@ -98,7 +98,7 @@ class AIManager:
             c_obj = client_config['client']
             try:
                 logging.info(f"🤖 Asking {c_name} about {name}...")
-                advice = c_obj.get_advice(name, code, rsi, ohlcv_text, news_context=news_text)
+                advice = c_obj.get_advice(name, code, rsi, ohlcv_text, news_context=news_text, extended_indicators=extended_indicators)
                 
                 rec = advice.get("recommendation", "ERROR")
                 reason = advice.get("reasoning", "No valid response")

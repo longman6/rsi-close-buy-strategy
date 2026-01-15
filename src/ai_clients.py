@@ -21,30 +21,59 @@ except ImportError:
 
 import config
 
-def _get_common_prompt(stock_name: str, code: str, rsi: float, ohlcv_text: str, news_context: str = "") -> str:
+def _get_common_prompt(stock_name: str, code: str, rsi: float, ohlcv_text: str, news_context: str = "", extended_indicators: Dict = None) -> str:
+    # 확장 지표 텍스트 생성
+    if extended_indicators:
+        ext_ind = extended_indicators
+        indicators_text = f"""
+    [Extended Indicators]
+    - Current Price: {ext_ind.get('current_price', 0):,.0f} KRW
+    - RSI(3): {ext_ind.get('rsi_3', 0):.1f}
+    - RSI(14): {ext_ind.get('rsi_14', 0):.1f}
+    - 5-Day Avg Volume: {ext_ind.get('avg_vol_5d', 0):,.0f}
+    - 20-Day Avg Volume: {ext_ind.get('avg_vol_20d', 0):,.0f}
+    - Volume Ratio (Today/20D): {ext_ind.get('volume_ratio', 0):.1f}%
+    - Distance from 20MA: {ext_ind.get('dist_20ma', 0):+.1f}%
+    - Distance from 60MA: {ext_ind.get('dist_60ma', 0):+.1f}%
+"""
+    else:
+        indicators_text = ""
+    
     return f"""
-    Analyze the KOSDAQ stock "{stock_name}" ({code}) for a potential Short-term Rebound Trade (1-10 days).
+    You are a quantitative trading analyst specializing in RSI({config.RSI_WINDOW}) mean reversion strategy with news sentiment filter.
+
+    ## STRATEGY RULES
+    - **Primary Signal**: RSI({config.RSI_WINDOW}) ≤ {config.RSI_BUY_THRESHOLD} (oversold condition triggers buy consideration)
+    - **Trend Filter**: Price must be above SMA({config.SMA_WINDOW}) to confirm uptrend
+    - **Holding Period**: Maximum {config.MAX_HOLDING_DAYS} trading days
+    - **Exit Conditions**: RSI({config.RSI_WINDOW}) > {config.RSI_SELL_THRESHOLD} OR +10% profit
+
+    ## TASK
+    Determine whether to BUY the KOSDAQ stock "{stock_name}" ({code}) based on the strategy above.
 
     [Technical Data]
     - Current RSI({config.RSI_WINDOW}): {rsi:.2f}
     - Note: RSI and SMA are calculated based on user config (RSI period: {config.RSI_WINDOW}, SMA period: {config.SMA_WINDOW}).
     - Recent Price History (Last 30 Days):
     {ohlcv_text}
-
+    {indicators_text}
     [News Context (Real-time RAG)]
     The following news headlines and snippets were retrieved from the last 24 hours:
     ---
     {news_context if news_context else "No recent news found."}
     ---
 
-    [Task]
-    1. **Technical Analysis**: Briefly analyze the price trend and volume from the provided OHLCV data. Is there signs of stopping the fall?
-    2. **News/Sentiment**: Analyze the provided 'News Context' above.
+    [Analysis Instructions]
+    1. **Technical Analysis**: Briefly analyze the price trend and volume from the provided OHLCV data. Is there signs of stopping the fall? Does RSI indicate oversold?
+       - Consider short-term RSI(3) for immediate momentum and RSI(14) for medium-term trend.
+       - Evaluate volume ratio to assess buying interest.
+       - Check distance from moving averages to gauge mean reversion potential.
+    2. **News/Sentiment Filter**: Analyze the provided 'News Context' above.
        - If "No recent news found", assume NO specific bad news (Neutral/Positive for rebound).
        - If there is bad news (e.g. Delisting risk, Embezzlement, huge earnings miss), it is a STRONG SELL signal (NO).
        - If there is good news or just general neutral news, it supports a rebound.
-    3. **Decision**: Provide a definitive 'YES' or 'NO' recommendation for buying right now.
-       - YES: If technicals show potential rebound AND no fatal bad news in the provided context.
+    3. **Decision**: Based on the strategy rules above, provide a definitive 'YES' or 'NO' recommendation.
+       - YES: If RSI is oversold, price is above SMA, AND no fatal bad news in the provided context.
        - NO: If trend is broken without support OR there is bad news explaining the drop.
     4. **Reasoning**: Summarize the reasoning based on both Technicals and News.
     
@@ -63,11 +92,11 @@ class ClaudeClient:
         self.model = model
         self.enabled = bool(self.client) and bool(api_key)
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "", extended_indicators: Dict = None) -> Dict:
         if not self.enabled:
             return {"recommendation": "SKIP (Config)", "reasoning": "Claude Disabled/No Key"}
         
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context, extended_indicators)
         
         try:
             message = self.client.messages.create(
@@ -104,11 +133,11 @@ class OpenAIClient:
         self.model = model
         self.enabled = bool(self.client) and bool(api_key)
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "", extended_indicators: Dict = None) -> Dict:
         if not self.enabled:
              return {"recommendation": "SKIP (Config)", "reasoning": "OpenAI Disabled/No Key"}
 
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context, extended_indicators)
         
         try:
             response = self.client.chat.completions.create(
@@ -131,11 +160,11 @@ class GrokClient:
         self.model = model 
         self.enabled = bool(self.client) and bool(api_key)
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "", extended_indicators: Dict = None) -> Dict:
         if not self.enabled:
              return {"recommendation": "SKIP (Config)", "reasoning": "Grok Disabled/No Key"}
 
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context, extended_indicators)
         
         try:
             response = self.client.chat.completions.create(
@@ -173,11 +202,11 @@ class GeminiClient:
                 logging.error(f"[Gemini] Init Error: {e}")
                 self.enabled = False
 
-    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "") -> Dict:
+    def get_advice(self, stock_name: str, code: str, rsi: float, ohlcv_text: str = "", news_context: str = "", extended_indicators: Dict = None) -> Dict:
         if not self.enabled:
              return {"recommendation": "SKIP (Config)", "reasoning": "Gemini Disabled/No Key"}
 
-        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context)
+        prompt = _get_common_prompt(stock_name, code, rsi, ohlcv_text, news_context, extended_indicators)
         
         # Retry Config
         max_retries = 3

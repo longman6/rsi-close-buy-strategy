@@ -53,6 +53,61 @@ class Strategy:
         df['RSI'] = 100 - (100 / (1 + rs))
         
         return df
+    
+    def calculate_extended_indicators(self, df):
+        """
+        AI 프롬프트용 확장 지표 계산.
+        Returns dict with additional indicators for the latest row.
+        """
+        if df.empty or len(df) < 60:
+            return None
+            
+        latest = df.iloc[-1]
+        
+        # RSI(3) 계산
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).fillna(0)
+        loss = (-delta.where(delta < 0, 0)).fillna(0)
+        
+        avg_gain_3 = gain.ewm(com=2, min_periods=3, adjust=False).mean()
+        avg_loss_3 = loss.ewm(com=2, min_periods=3, adjust=False).mean()
+        rs_3 = avg_gain_3 / avg_loss_3
+        rsi_3_series = 100 - (100 / (1 + rs_3))
+        rsi_3 = rsi_3_series.iloc[-1] if not pd.isna(rsi_3_series.iloc[-1]) else 0
+        
+        # RSI(14) 계산
+        avg_gain_14 = gain.ewm(com=13, min_periods=14, adjust=False).mean()
+        avg_loss_14 = loss.ewm(com=13, min_periods=14, adjust=False).mean()
+        rs_14 = avg_gain_14 / avg_loss_14
+        rsi_14_series = 100 - (100 / (1 + rs_14))
+        rsi_14 = rsi_14_series.iloc[-1] if not pd.isna(rsi_14_series.iloc[-1]) else 0
+        
+        # 거래량 지표
+        current_volume = latest.get('Volume', 0)
+        avg_vol_5d = df['Volume'].tail(5).mean() if 'Volume' in df.columns else 0
+        avg_vol_20d = df['Volume'].tail(20).mean() if 'Volume' in df.columns else 0
+        volume_ratio = (current_volume / avg_vol_20d * 100) if avg_vol_20d > 0 else 0
+        
+        # 이동평균선 계산
+        ma_20 = df['Close'].rolling(window=20).mean().iloc[-1]
+        ma_60 = df['Close'].rolling(window=60).mean().iloc[-1]
+        
+        current_price = latest['Close']
+        
+        # 이평선 대비 이격도(%)
+        dist_20ma = ((current_price / ma_20) - 1) * 100 if not pd.isna(ma_20) and ma_20 > 0 else 0
+        dist_60ma = ((current_price / ma_60) - 1) * 100 if not pd.isna(ma_60) and ma_60 > 0 else 0
+        
+        return {
+            'current_price': float(current_price),
+            'rsi_3': float(rsi_3),
+            'rsi_14': float(rsi_14),
+            'avg_vol_5d': float(avg_vol_5d),
+            'avg_vol_20d': float(avg_vol_20d),
+            'volume_ratio': float(volume_ratio),
+            'dist_20ma': float(dist_20ma),
+            'dist_60ma': float(dist_60ma)
+        }
 
     def analyze_stock(self, code, df):
         """
