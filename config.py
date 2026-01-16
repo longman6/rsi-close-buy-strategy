@@ -58,3 +58,7 @@ SECOND_ORDER_DISCOUNT = float(os.getenv("SECOND_ORDER_DISCOUNT", 0.005))  # Defa
 PRICE_INCREMENT_STEP = float(os.getenv("PRICE_INCREMENT_STEP", 0.002))  # +0.2% per step
 PRICE_INCREMENT_INTERVAL = int(os.getenv("PRICE_INCREMENT_INTERVAL", 300))  # 5 minutes
 MAX_PRICE_INCREASE = float(os.getenv("MAX_PRICE_INCREASE", 0.02))  # Max +2%
+
+# Trade Record Sync (장 마감 후 체결 내역 동기화)
+TIME_TRADE_SYNC = os.getenv("TIME_TRADE_SYNC", "15:40")
+

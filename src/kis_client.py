@@ -790,3 +790,83 @@ class KISClient:
             else:
                 logging.error(f"[KIS] Period Trades Error: {data['msg1']}")
         return []
+
+    def get_today_filled_info(self, code, side="buy"):
+        """
+        오늘 특정 종목의 체결 정보를 조회합니다.
+        
+        Returns:
+            dict: {
+                'filled_qty': 총 체결 수량,
+                'avg_price': 평균 체결가,
+                'total_amount': 총 체결 금액,
+                'unfilled_qty': 미체결 수량
+            }
+        """
+        tz_kst = pytz.timezone('Asia/Seoul')
+        today_str = datetime.now(pytz.utc).astimezone(tz_kst).strftime("%Y%m%d")
+        
+        result = {
+            'filled_qty': 0,
+            'avg_price': 0.0,
+            'total_amount': 0.0,
+            'unfilled_qty': 0
+        }
+        
+        # 1. 체결 내역 조회
+        path = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
+        tr_id = "VTTC8001R" if self.is_mock else "TTTC8001R"
+        
+        side_code = "02" if side == "buy" else "01"  # 02: Buy, 01: Sell
+        
+        params = {
+            "CANO": self.account_no,
+            "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
+            "INQR_STRT_DT": today_str,
+            "INQR_END_DT": today_str,
+            "SLL_BUY_DVSN_CD": side_code,
+            "INQR_DVSN": "00",
+            "PDNO": code,  # 특정 종목만 조회
+            "CCLD_DVSN": "00",  # 00: All (체결+미체결)
+            "ORD_GNO_BRNO": "",
+            "ODNO": "",
+            "INQR_DVSN_3": "00",
+            "INQR_DVSN_1": "",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        res = self._send_request("GET", path, tr_id, params=params)
+        if res and res.status_code == 200:
+            data = res.json()
+            if data['rt_cd'] == '0':
+                orders = data.get('output1', [])
+                
+                total_filled_qty = 0
+                total_filled_amount = 0.0
+                total_unfilled_qty = 0
+                
+                for order in orders:
+                    if order.get('pdno') == code:
+                        # 체결 수량
+                        filled = int(order.get('tot_ccld_qty', 0))
+                        # 체결 금액
+                        filled_amt = float(order.get('tot_ccld_amt', 0))
+                        # 주문 수량 - 체결 수량 = 미체결
+                        ord_qty = int(order.get('ord_qty', 0))
+                        unfilled = ord_qty - filled
+                        
+                        total_filled_qty += filled
+                        total_filled_amount += filled_amt
+                        total_unfilled_qty += unfilled
+                
+                result['filled_qty'] = total_filled_qty
+                result['total_amount'] = total_filled_amount
+                result['unfilled_qty'] = total_unfilled_qty
+                
+                # 평균 체결가 계산
+                if total_filled_qty > 0:
+                    result['avg_price'] = total_filled_amount / total_filled_qty
+                    
+        return result
+

@@ -724,6 +724,41 @@ def render_trade_history_page():
     st.title("📈 Trade History")
     st.markdown("Detailed log of all BUY/SELL executions stored in the database.")
 
+    # --- 기간 필터 UI ---
+    st.subheader("📅 Period Filter")
+    
+    # 필터 옵션: Week, Month, Year, Custom
+    filter_options = ["Week (1주)", "Month (1개월)", "Year (1년)", "Custom (직접 설정)"]
+    selected_filter = st.radio("Select Period", filter_options, horizontal=True, key="trade_period_filter")
+    
+    # 오늘 날짜 (KST 기준)
+    today = datetime.now(pytz.timezone('Asia/Seoul')).date()
+    
+    # 기간에 따른 시작일/종료일 계산
+    if selected_filter == "Week (1주)":
+        start_date = today - timedelta(days=7)
+        end_date = today
+    elif selected_filter == "Month (1개월)":
+        start_date = today - timedelta(days=30)
+        end_date = today
+    elif selected_filter == "Year (1년)":
+        start_date = today - timedelta(days=365)
+        end_date = today
+    else:  # Custom
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input("Start Date", value=today - timedelta(days=30), key="trade_start_date")
+        with col2:
+            end_date = st.date_input("End Date", value=today, key="trade_end_date")
+    
+    # 날짜 유효성 검사
+    if start_date > end_date:
+        st.error("시작일이 종료일보다 늦을 수 없습니다.")
+        return
+    
+    st.caption(f"📆 조회 기간: {start_date} ~ {end_date}")
+    st.divider()
+
     db = DBManager()
     history = db.get_trade_history()
 
@@ -732,6 +767,14 @@ def render_trade_history_page():
         return
 
     df = pd.DataFrame(history)
+    
+    # 날짜 필터링 (date 컬럼은 'YYYY-MM-DD' 형식 문자열)
+    df['date_parsed'] = pd.to_datetime(df['date']).dt.date
+    df = df[(df['date_parsed'] >= start_date) & (df['date_parsed'] <= end_date)]
+    
+    if df.empty:
+        st.info(f"선택한 기간 ({start_date} ~ {end_date})에 거래 기록이 없습니다.")
+        return
     
     # 1. Summary Metrics
     st.subheader("📊 Performance Summary")
@@ -744,11 +787,28 @@ def render_trade_history_page():
     avg_pnl_pct = sell_df['pnl_pct'].mean() if total_trades > 0 else 0.0
     win_rate = (len(sell_df[sell_df['pnl_pct'] > 0]) / total_trades * 100) if total_trades > 0 else 0.0
     
-    c1, c2, c3, c4 = st.columns(4)
+    # 총 수익 금액 계산 (pnl_amt 필드 사용, 0이면 계산)
+    # pnl_amt가 없거나 합계가 0이면 amount와 pnl_pct로 계산
+    def calc_pnl_from_pct(row):
+        if row['pnl_pct'] == -100:
+            return -row['amount']
+        return row['amount'] * row['pnl_pct'] / (100 + row['pnl_pct'])
+    
+    # DB에 저장된 pnl_amt 합계 확인
+    db_pnl_amt = sell_df['pnl_amt'].sum() if 'pnl_amt' in sell_df.columns else 0.0
+    
+    if db_pnl_amt != 0:
+        total_pnl_amt = db_pnl_amt
+    else:
+        # pnl_amt가 0이면 amount와 pnl_pct로 계산
+        total_pnl_amt = sell_df.apply(calc_pnl_from_pct, axis=1).sum() if total_trades > 0 else 0.0
+    
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Closed Trades", f"{total_trades}")
-    c2.metric("Total P/L (%)", f"{total_pnl_pct:.2f}%")
-    c3.metric("Avg P/L (%)", f"{avg_pnl_pct:.2f}%")
-    c4.metric("Win Rate", f"{win_rate:.1f}%")
+    c2.metric("Total P/L (₩)", f"{total_pnl_amt:,.0f}")
+    c3.metric("Total P/L (%)", f"{total_pnl_pct:.2f}%")
+    c4.metric("Avg P/L (%)", f"{avg_pnl_pct:.2f}%")
+    c5.metric("Win Rate", f"{win_rate:.1f}%")
     
     st.divider()
 

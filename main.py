@@ -38,6 +38,7 @@ state = {
     "buy_verified": False,
     "sell_check_done": False,
     "sell_exec_done": False,
+    "trade_sync_done": False,  # 거래 기록 동기화 완료 플래그
     "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
     "last_reset_date": None,
     "is_holiday": False,
@@ -97,6 +98,7 @@ def reset_daily_state(kis):
         state["buy_verified"] = False
         state["sell_check_done"] = False
         state["sell_exec_done"] = False
+        state["trade_sync_done"] = False
         state["buy_targets"] = []
         state["exclude_list"] = load_exclusion_list(kis)
         state["gemini_advice_done"] = False
@@ -217,6 +219,12 @@ def main():
                 if current_time >= config.TIME_SELL_EXEC and not state["sell_exec_done"]:
                     run_sell_execution(kis, telegram, strategy, trade_manager)
                     state["sell_exec_done"] = True
+
+            # 6. 15:40 거래 기록 동기화 (장 마감 후 체결 내역 일괄 저장)
+            if not state["is_holiday"]:
+                if current_time >= config.TIME_TRADE_SYNC and not state["trade_sync_done"]:
+                    sync_trades_at_close(kis, telegram, trade_manager)
+                    state["trade_sync_done"] = True
             
             time.sleep(1)
             
@@ -408,8 +416,7 @@ def run_pre_order(kis, telegram, trade_manager):
                 f"기준가: {int(base_price):,}원\n"
                 f"금액: {qty*limit_price:,}원"
             )
-            # Update History (Assume filled later)
-            trade_manager.update_buy(code, target['name'], get_now_kst().strftime("%Y%m%d"), limit_price, qty)
+            # Note: 거래 기록은 장 마감 후 15:40에 sync_trades_at_close()에서 일괄 저장
 
             # Update Local Cash Estimate (Approximate)
             order_amt = limit_price * qty
@@ -452,6 +459,35 @@ def run_second_order(kis, telegram, trade_manager):
         if 'first_order_qty' not in target:
             logging.warning(f"⚠️  {code}: No first order found, skipping second order")
             continue
+
+        # --- [수정 1] 1차 주문 체결 현황 확인 ---
+        time.sleep(0.3)  # API 호출 간 딜레이
+        filled_info = kis.get_today_filled_info(code, side="buy")
+        first_order_qty = target.get('first_order_qty', 0)
+        filled_qty = filled_info.get('filled_qty', 0)
+        unfilled_qty = filled_info.get('unfilled_qty', 0)
+        
+        logging.info(f"📊 {code} 1차 주문 현황: 주문 {first_order_qty}주 / 체결 {filled_qty}주 / 미체결 {unfilled_qty}주")
+        
+        # 1차 주문이 50% 미만 체결된 경우, 2차 주문 건너뛰기
+        if first_order_qty > 0 and filled_qty < first_order_qty * 0.5:
+            logging.info(f"⏭️  {code}: 1차 주문 체결률 50% 미만 ({filled_qty}/{first_order_qty}), 2차 주문 스킵")
+            telegram.send_message(
+                f"⏭️ 2차 주문 스킵\n"
+                f"종목: {target['name']} ({code})\n"
+                f"사유: 1차 주문 체결률 부족 ({filled_qty}/{first_order_qty}주)"
+            )
+            continue
+        
+        # --- [수정 3] 1차 주문 체결가로 TradeManager 업데이트 ---
+        if filled_qty > 0 and filled_info.get('avg_price', 0) > 0:
+            avg_fill_price = filled_info['avg_price']
+            # Note: 이미 run_pre_order에서 update_buy 호출했으므로, 
+            # 실제 체결가로 갱신하려면 TradeManager에 update 메서드가 필요
+            # 현재는 로그만 남기고, 향후 개선 가능
+            target['actual_fill_price'] = avg_fill_price
+            target['actual_fill_qty'] = filled_qty
+            logging.info(f"📝 {code} 1차 체결 정보: {filled_qty}주 @ 평균 {avg_fill_price:,.0f}원")
 
         # Fetch current price
         curr = kis.get_current_price(code)
@@ -515,13 +551,11 @@ def run_second_order(kis, telegram, trade_manager):
                 f"수량: {qty}주\n"
                 f"가격: {limit_price:,}원 (현재가 대비 -{second_order_discount*100:.1f}%)\n"
                 f"현재가: {int(current_price):,}원\n"
+                f"1차 체결: {filled_qty}주 @ {filled_info.get('avg_price', 0):,.0f}원\n"
                 f"총 주문: {target['target_qty']}주 (1차 {target.get('first_order_qty', 0)} + 2차 {qty})"
             )
 
-            # Update trade manager
-            trade_manager.update_buy(code, target['name'],
-                                    get_now_kst().strftime("%Y%m%d"),
-                                    limit_price, qty)
+            # Note: 거래 기록은 장 마감 후 15:40에 sync_trades_at_close()에서 일괄 저장
 
             current_cash -= (qty * limit_price)
             logging.info(f"✅ Second Order: {code} {qty}ea @ {limit_price:,} | Cash Left: {current_cash:,}")
@@ -841,5 +875,96 @@ def run_sell_execution(kis, telegram, strategy, trade_manager):
              else:
                  telegram.send_message(f"❌ Sell Failed {name}: {msg}")
 
+def sync_trades_at_close(kis, telegram, trade_manager):
+    """
+    15:40: 장 마감 후 오늘의 체결 내역을 조회하여 DB에 저장.
+    - 동일 종목 다중 매수 → 평균단가로 1건 기록
+    - 실제 체결가 기준으로 정확한 기록
+    """
+    logging.info("📝 [15:40] 오늘의 체결 내역 동기화 시작...")
+    telegram.send_message("📝 [15:40] 거래 기록 동기화 시작")
+    
+    today_str = get_now_kst().strftime("%Y%m%d")
+    db_date = f"{today_str[:4]}-{today_str[4:6]}-{today_str[6:]}"
+    
+    # 1. 오늘의 전체 체결 내역 조회
+    trades = kis.get_period_trades(today_str, today_str)
+    
+    if not trades:
+        logging.info("ℹ️  오늘 체결 내역 없음")
+        telegram.send_message("ℹ️ 오늘 체결된 거래 없음")
+        return
+    
+    # 2. 종목별/매수매도별 집계
+    # 구조: {code: {'buy': {'total_qty': 0, 'total_amt': 0, 'name': ''}, 'sell': {...}}}
+    aggregated = {}
+    
+    for trade in trades:
+        code = trade.get('pdno', '')
+        name = trade.get('prdt_name', '')
+        
+        # 체결 수량/금액
+        filled_qty = int(trade.get('tot_ccld_qty', 0))
+        filled_amt = float(trade.get('tot_ccld_amt', 0))
+        
+        # 매수/매도 구분 (sll_buy_dvsn_cd: 01=매도, 02=매수)
+        side_code = trade.get('sll_buy_dvsn_cd', '')
+        side = 'sell' if side_code == '01' else 'buy'
+        
+        if filled_qty == 0:
+            continue
+        
+        if code not in aggregated:
+            aggregated[code] = {
+                'buy': {'total_qty': 0, 'total_amt': 0.0, 'name': name},
+                'sell': {'total_qty': 0, 'total_amt': 0.0, 'name': name}
+            }
+        
+        aggregated[code][side]['total_qty'] += filled_qty
+        aggregated[code][side]['total_amt'] += filled_amt
+        aggregated[code][side]['name'] = name  # 이름 갱신
+    
+    # 3. 집계된 데이터를 DB에 저장
+    buy_count = 0
+    sell_count = 0
+    
+    for code, data in aggregated.items():
+        # 매수 기록
+        buy_data = data['buy']
+        if buy_data['total_qty'] > 0:
+            avg_price = buy_data['total_amt'] / buy_data['total_qty']
+            qty = buy_data['total_qty']
+            name = buy_data['name']
+            
+            # TradeManager (holdings 추적용)
+            trade_manager.update_buy(code, name, today_str, avg_price, qty)
+            
+            logging.info(f"📗 BUY 기록: {name}({code}) {qty}주 @ {avg_price:,.0f}원 (총 {buy_data['total_amt']:,.0f}원)")
+            buy_count += 1
+        
+        # 매도 기록
+        sell_data = data['sell']
+        if sell_data['total_qty'] > 0:
+            avg_price = sell_data['total_amt'] / sell_data['total_qty']
+            qty = sell_data['total_qty']
+            name = sell_data['name']
+            
+            # P/L 계산: 보유 정보에서 평균 매수가 조회 필요
+            # 현재 구조에서는 매도 시점에 P/L을 계산하기 어려움
+            # run_sell_execution에서 이미 update_sell 호출하므로 여기서는 스킵
+            # (매도는 run_sell_execution에서 처리됨)
+            
+            logging.info(f"📕 SELL 체결 확인: {name}({code}) {qty}주 @ {avg_price:,.0f}원")
+            sell_count += 1
+    
+    msg = (
+        f"✅ 거래 기록 동기화 완료\n"
+        f"📗 매수: {buy_count}건\n"
+        f"📕 매도: {sell_count}건"
+    )
+    logging.info(msg)
+    telegram.send_message(msg)
+
 if __name__ == "__main__":
     main()
+
