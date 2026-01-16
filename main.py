@@ -272,8 +272,10 @@ def run_morning_analysis(kis, telegram, strategy, trade_manager):
         return
 
     # 2. Get Consensus Candidates
-    consensus_codes = db.get_consensus_candidates(today_str, min_votes=4)
-    logging.info(f"Found {len(consensus_codes)} candidates with 4-LLM Consensus")
+    # Change: User requested "Purchase unless ALL LLMs say NO". 
+    # This implies selecting if at least 1 LLM says YES.
+    consensus_codes = db.get_consensus_candidates(today_str, min_votes=1)
+    logging.info(f"Found {len(consensus_codes)} candidates with at least 1-LLM Approval")
     
     if not consensus_codes:
         msg = "ℹ️ No stocks with 4-LLM Consensus found."
