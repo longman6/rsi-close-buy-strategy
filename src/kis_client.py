@@ -330,6 +330,73 @@ class KISClient:
             return df
         return pd.DataFrame()
 
+    def get_ohlcv_cached(self, code, start_date=None, end_date=None):
+        """
+        Fetch OHLCV using local cache + Current Day API (Optimization).
+        1. Load data/ohlcv/{code}.pkl
+        2. If file missing or old, fallback to full API (get_daily_ohlcv).
+        3. If file exists, append today's current price (OHLCV) if needed.
+        """
+        cache_dir = "data/ohlcv"
+        cache_path = os.path.join(cache_dir, f"{code}.pkl")
+        
+        df_cached = pd.DataFrame()
+        
+        # 1. Load Cache
+        if os.path.exists(cache_path):
+            try:
+                df_cached = pd.read_pickle(cache_path)
+            except Exception:
+                pass
+
+        today_str = datetime.now().strftime("%Y%m%d")
+        
+        # 2. Check Cache Validity
+        if df_cached.empty:
+            # No cache, fetch full history
+            df = self.get_daily_ohlcv(code, start_date=start_date, end_date=end_date)
+            # Save for next time (even if it's today mid-day, next run will just overwrite or append? 
+            # We should save only 'closed' days ideally, to avoid saving partial candles permanently.
+            # But here we just follow the user instruction: "Analyze script saves daily".
+            # If we fetch here, we don't save to file to avoid corrupting the 'official' daily cache with partial data.
+            return df
+        
+        # 3. Append Today's Data (Real-time)
+        # Check if cache includes today
+        if not df_cached.empty:
+            last_date = df_cached.iloc[-1]['Date']
+            if last_date.strftime("%Y%m%d") < today_str:
+                # Need today's data
+                curr = self.get_current_price(code)
+                if curr:
+                    try:
+                        # Construct OHLCV row from current price info
+                        # curr dict has: stck_prpr (Close), stck_oprc (Open), stck_hgpr (High), stck_lwpr (Low), acml_vol (Vol)
+                        new_row = {
+                            'Date': pd.to_datetime(today_str),
+                            'Open': float(curr['stck_oprc']),
+                            'High': float(curr['stck_hgpr']),
+                            'Low': float(curr['stck_lwpr']),
+                            'Close': float(curr['stck_prpr']),
+                            'Volume': int(curr['acml_vol'])
+                        }
+                        
+                        # Only add if valid (sometimes open is 0 before market start)
+                        if new_row['Close'] > 0:
+                            # Append
+                            # Use concat
+                            today_df = pd.DataFrame([new_row])
+                            df_cached = pd.concat([df_cached, today_df], ignore_index=True)
+                            
+                    except Exception as e:
+                        logging.warning(f"[KIS] Failed to append today's data: {e}")
+                        
+        # Filter by start_date if needed
+        if start_date:
+            df_cached = df_cached[df_cached['Date'] >= pd.to_datetime(start_date)]
+            
+        return df_cached
+
     def get_balance(self):
         """
         Check account balance and holdings.

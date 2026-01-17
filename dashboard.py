@@ -336,7 +336,7 @@ def render_dashboard():
             pnl_amt = float(h['evlu_pfls_amt']) 
             
             # RSI/SMA Calculation & Day Change
-            df = kis.get_daily_ohlcv(code)
+            df = kis.get_ohlcv_cached(code)
             rsi = 0.0
             sma = 0.0
             is_above_sma = False

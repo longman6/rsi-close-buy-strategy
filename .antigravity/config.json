@@ -1,8 +1,0 @@
-{
-    "project_rules": [
-        "답변은 한국어로 할 것",
-        "가상환경을 사용해 실행할 것",
-        ".env에 환경변수를 설정할 것"
-    ],
-    "preferred_libraries": []
-}

@@ -122,6 +122,19 @@ def analyze_kosdaq150():
     from src.telegram_bot import TelegramBot
     telegram = TelegramBot()
 
+    # [Clean Cache] Delete existing cache to ensure fresh data for new day
+    import shutil
+    cache_dir = "data/ohlcv"
+    if os.path.exists(cache_dir):
+        logging.info("🧹 Cleaning up old OHLCV cache...")
+        try:
+            shutil.rmtree(cache_dir)
+            os.makedirs(cache_dir, exist_ok=True)
+        except Exception as e:
+            logging.error(f"Failed to clean cache: {e}")
+    else:
+        os.makedirs(cache_dir, exist_ok=True)
+
     try:
         universe = get_kosdaq150_universe()
         logging.info(f"Loaded {len(universe)} stocks from KOSDAQ 150.")
@@ -143,6 +156,16 @@ def analyze_kosdaq150():
                 
                 df = kis.get_daily_ohlcv(code, start_date=start_dt)
                 if df.empty: continue
+
+                # [Save Cache] Save OHLCV to local file for later use
+                # This drastically reduces API calls during trading hours (main.py, dashboard.py)
+                try:
+                    cache_dir = "data/ohlcv"
+                    os.makedirs(cache_dir, exist_ok=True)
+                    cache_path = os.path.join(cache_dir, f"{code}.pkl")
+                    df.to_pickle(cache_path)
+                except Exception as cache_err:
+                    logging.warning(f"Failed to save cache for {code}: {cache_err}")
                 
                 # 2. Calculate Indicators
                 df = strategy.calculate_indicators(df)

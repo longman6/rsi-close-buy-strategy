@@ -759,7 +759,7 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, 
         # Calculate RSI
         # Only fetch if we are going to log OR send
         time.sleep(0.2 if kis.is_mock else 0.1) # Brief delay
-        df = kis.get_daily_ohlcv(code, start_date=start_date)
+        df = kis.get_ohlcv_cached(code, start_date=start_date)
         rsi_val = 0.0
         if not df.empty:
             df = strategy.calculate_indicators(df)
