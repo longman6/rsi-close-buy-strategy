@@ -202,4 +202,4 @@ python rsi_strategy_backtest.py
 ---
 
 ## 라이선스
-MIT License
+최진호 전용
