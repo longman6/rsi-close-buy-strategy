@@ -19,7 +19,7 @@ import time
 # ============================================================
 DATA_START_DATE = '2008-01-01'
 TEST_START_DATE = '2010-01-01'
-RSI_WINDOW = 3
+RSI_WINDOW = 5
 LOSS_LOCKOUT_DAYS = 90
 INITIAL_CAPITAL = 100_000_000
 TX_FEE_RATE = 0.00015
@@ -311,7 +311,7 @@ def main():
                 elapsed = time.time() - start_time
                 pct = completed / total_combos * 100
                 eta = (elapsed / completed) * (total_combos - completed) / 60 if completed > 0 else 0
-                print(f"  📊 진행: {completed:,}/{total_combos:,} ({pct:.1f}%) | 경과: {elapsed/60:.1f}분 | 남은 시간: {eta:.1f}분")
+                print(f"  📊 진행: {completed:,}/{total_combos:,} ({pct:.1f}%) | 경과: {elapsed/60:.1f}분 | 남은 시간: {eta:.1f}분", flush=True)
     
     elapsed = time.time() - start_time
     print(f"\n✅ 최적화 완료! 소요 시간: {elapsed/60:.1f}분")
@@ -324,7 +324,7 @@ def main():
     
     # 결과 저장
     os.makedirs('reports', exist_ok=True)
-    csv_path = 'reports/rsi_optimization_results.csv'
+    csv_path = 'reports/rsi5_optimization_results.csv'
     df.to_csv(csv_path, index=False)
     print(f"\n📁 전체 결과 저장: {csv_path}")
     
@@ -343,7 +343,7 @@ def main():
         print(stable_df.to_markdown(index=False, floatfmt=".2f"))
     
     # 보고서 저장
-    report_path = 'reports/rsi_optimization_report.md'
+    report_path = 'reports/rsi5_optimization_report.md'
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f"""# KOSDAQ 150 RSI 전략 최적화 결과
 생성일: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
