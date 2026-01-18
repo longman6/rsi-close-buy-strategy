@@ -313,14 +313,15 @@ def render_dashboard():
     
     if holdings:
         # Header Row
-        h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 1, 1, 1, 1.5, 1.5, 1])
+        h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([2, 1, 0.8, 1.2, 1, 1.5, 1.5, 0.8])
         h1.markdown("**Name/Code**")
         h2.markdown("**Price**")
         h3.markdown("**Qty**")
-        h4.markdown("**RSI/SMA**")
-        h5.markdown("**P/L**")
-        h6.markdown("**Day Chg**")
-        h7.markdown("**Action**")
+        h4.markdown("**Eval Amt**")
+        h5.markdown("**RSI/SMA**")
+        h6.markdown("**P/L**")
+        h7.markdown("**Day Chg**")
+        h8.markdown("**Action**")
         st.divider()
 
         # Fetch RSI for each (cached if possible, but real-time needed)
@@ -333,7 +334,8 @@ def render_dashboard():
             avg = float(h['pchs_avg_pric'])
             qty = int(h['hldg_qty'])
             pnl_pct = float(h['evlu_pfls_rt']) 
-            pnl_amt = float(h['evlu_pfls_amt']) 
+            pnl_amt = float(h['evlu_pfls_amt'])
+            eval_amt = curr * qty  # 평가 금액 계산
             
             # RSI/SMA Calculation & Day Change
             df = kis.get_ohlcv_cached(code)
@@ -360,7 +362,7 @@ def render_dashboard():
                         day_change_pct = ((today_price - yesterday_close) / yesterday_close) * 100
 
             # UI Rendering
-            c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 1, 1, 1, 1.5, 1.5, 1])
+            c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2, 1, 0.8, 1.2, 1, 1.5, 1.5, 0.8])
             
             # 1. Name
             url = f"https://finance.naver.com/item/main.naver?code={code}"
@@ -372,25 +374,28 @@ def render_dashboard():
             # 3. Qty
             c3.write(f"{qty:,}")
             
-            # 4. RSI/SMA
+            # 4. Eval Amt (평가 금액)
+            c4.write(f"{eval_amt:,.0f}")
+            
+            # 5. RSI/SMA
             sma_icon = "✅" if is_above_sma else "❌"
-            c4.write(f"RSI: {rsi:.1f}\nSMA({config.SMA_WINDOW}): {int(sma):,} {sma_icon}")
+            c5.write(f"RSI: {rsi:.1f}\nSMA({config.SMA_WINDOW}): {int(sma):,} {sma_icon}")
             
-            # 5. P/L
+            # 6. P/L
             pnl_c = "red" if pnl_pct >= 0 else "blue"
-            c5.markdown(f":{pnl_c}[{pnl_pct:.2f}%]\n:{pnl_c}[{pnl_amt:,.0f}]")
+            c6.markdown(f":{pnl_c}[{pnl_pct:.2f}%]\n:{pnl_c}[{pnl_amt:,.0f}]")
             
-            # 6. Day Change
+            # 7. Day Change
             day_c = "red" if day_change_pct > 0 else "blue" if day_change_pct < 0 else "grey"
-            c6.markdown(f":{day_c}[{day_change_pct:+.2f}%]")
+            c7.markdown(f":{day_c}[{day_change_pct:+.2f}%]")
             
-            # 7. Action Button
+            # 8. Action Button
             sell_key = f"sell_state_{code}"
             
             # Check if we are in confirmation mode for this stock
             if st.session_state.get(sell_key):
                 # Confirmation Mode
-                ac1, ac2 = c7.columns(2)
+                ac1, ac2 = c8.columns(2)
                 if ac1.button("확인", key=f"confirm_{code}", type="primary", use_container_width=True):
                     # Execute Market Sell
                     with st.spinner(f"Selling {name}..."):
@@ -426,7 +431,7 @@ def render_dashboard():
                     st.rerun()
             else:
                 # Default Mode
-                if c7.button("매도", key=f"init_sell_{code}", type="secondary", use_container_width=True):
+                if c8.button("매도", key=f"init_sell_{code}", type="secondary", use_container_width=True):
                     st.session_state[sell_key] = True
                     st.rerun()
 
