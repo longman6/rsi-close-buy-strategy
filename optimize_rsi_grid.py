@@ -19,7 +19,7 @@ import time
 # ============================================================
 DATA_START_DATE = '2008-01-01'
 TEST_START_DATE = '2010-01-01'
-RSI_WINDOW = 5
+RSI_WINDOW = 3
 LOSS_LOCKOUT_DAYS = 90
 INITIAL_CAPITAL = 100_000_000
 TX_FEE_RATE = 0.00015
@@ -33,7 +33,7 @@ N_JOBS = 20
 SMA_LIST = [30, 50, 70, 90, 110, 130, 150]          # 7개
 BUY_LIST = [20, 22, 24, 26, 28, 30, 32]             # 7개
 SELL_LIST = [70, 72, 74, 76, 78, 80]                # 6개
-POS_LIST = [3, 5, 7, 10]                            # 4개
+POS_LIST = [4]                            # 1개 (고정)
 HOLD_LIST = [10, 15, 20, 25, 30, 40]                # 6개
 
 # 글로벌 데이터 (워커 프로세스용)
@@ -324,7 +324,7 @@ def main():
     
     # 결과 저장
     os.makedirs('reports', exist_ok=True)
-    csv_path = 'reports/rsi5_optimization_results.csv'
+    csv_path = 'reports/rsi3_maxpos4_optimization_results.csv'
     df.to_csv(csv_path, index=False)
     print(f"\n📁 전체 결과 저장: {csv_path}")
     
@@ -343,7 +343,7 @@ def main():
         print(stable_df.to_markdown(index=False, floatfmt=".2f"))
     
     # 보고서 저장
-    report_path = 'reports/rsi5_optimization_report.md'
+    report_path = 'reports/rsi3_maxpos4_optimization_report.md'
     with open(report_path, 'w', encoding='utf-8') as f:
         f.write(f"""# KOSDAQ 150 RSI 전략 최적화 결과
 생성일: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
