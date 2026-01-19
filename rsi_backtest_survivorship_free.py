@@ -107,7 +107,7 @@ def get_ohlcv_data(conn, symbols, start_date):
 # ---------------------------------------------------------
 def run_backtest():
     universe_map = load_universe_map(UNIVERSE_DIR)
-    conn = duckdb.connect(DB_PATH)
+    conn = duckdb.connect(DB_PATH, read_only=True)
     
     # 전체 거래일 리스트 (DB에서 가장 거래가 많은 종목 기준으로 추출 - 인덱스 대용)
     all_dates = conn.execute("SELECT DISTINCT date FROM ohlcv_daily WHERE date >= '2016-01-01' ORDER BY date").df()['date'].tolist()

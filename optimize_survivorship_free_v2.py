@@ -176,11 +176,11 @@ def run_backtest_core(params):
 # ---------------------------------------------------------
 def run_optimization():
     u_map = load_universe_map(UNIVERSE_DIR)
-    conn = duckdb.connect(DB_PATH)
+    conn = duckdb.connect(DB_PATH, read_only=True)
     dates = conn.execute(f"SELECT DISTINCT date FROM ohlcv_daily WHERE date >= '{START_DATE}' ORDER BY date").df()['date'].tolist()
     dates = pd.to_datetime(dates)
     
-    rsi_windows = [3, 4, 5, 6, 7]
+    rsi_windows = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     stock_data_base = fetch_all_data(conn, u_map, rsi_windows)
     
     # 파라미터 그리드 (사용자 지정 범위)

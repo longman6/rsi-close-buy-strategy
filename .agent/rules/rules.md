@@ -71,6 +71,7 @@ reports/       # 백테스트 결과 보고서
 - **DuckDB 경로**: `/home/longman6/projects/stock-collector/data/stock.duckdb`
 - **스키마 문서**: `/home/longman6/projects/stock-collector/docs/01-DATABASE-SCHEMA.md`
 - 데이터 조회 시 위 DuckDB에서 우선적으로 찾을 것
+- read_only=True 로 DB를 오픈할 것 
 
 ### 결과 저장
 
