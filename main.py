@@ -884,10 +884,18 @@ def sync_trades_at_close(kis, telegram, trade_manager):
     - 실제 체결가 기준으로 정확한 기록
     """
     logging.info("📝 [15:40] 오늘의 체결 내역 동기화 시작...")
-    telegram.send_message("📝 [15:40] 거래 기록 동기화 시작")
     
     today_str = get_now_kst().strftime("%Y%m%d")
     db_date = f"{today_str[:4]}-{today_str[4:6]}-{today_str[6:]}"
+
+    # 중복 체크: 이미 오늘 기록이 있으면 스킵
+    if trade_manager.db and trade_manager.db.has_trade_history_for_date(db_date):
+        msg = f"ℹ️ [15:40] 오늘({db_date}) 거래 기록이 이미 존재합니다. 동기화를 건너뜁니다."
+        logging.info(msg)
+        # telegram.send_message(msg) # 알림은 생략하거나 필요시 추가
+        return
+
+    telegram.send_message("📝 [15:40] 거래 기록 동기화 시작")
     
     # 1. 오늘의 전체 체결 내역 조회
     trades = kis.get_period_trades(today_str, today_str)

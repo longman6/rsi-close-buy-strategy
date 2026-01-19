@@ -183,12 +183,12 @@ def run_optimization():
     rsi_windows = [3, 4, 5, 6, 7]
     stock_data_base = fetch_all_data(conn, u_map, rsi_windows)
     
-    # 파라미터 그리드 (좀 더 촘촘하게)
-    sma_grids = [100, 150, 200]
-    buy_grids = [20, 25, 30]
-    sell_grids = [70, 75, 80]
-    hold_grids = [10, 20, 30]
-    pos_grids = [7, 10, 15]
+    # 파라미터 그리드 (사용자 지정 범위)
+    sma_grids = [30, 50, 70, 90, 110, 130, 150]
+    buy_grids = [20, 22, 24, 26, 28, 30, 32]
+    sell_grids = [70, 72, 74, 76, 78, 80]
+    hold_grids = [10, 15, 20, 25, 30, 40]
+    pos_grids = [3, 5, 7, 10]
     
     results = []
     total_start = time.time()

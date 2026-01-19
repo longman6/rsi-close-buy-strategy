@@ -236,9 +236,18 @@ class DBManager:
     # --- User Data DB Methods ---
     def save_trade_record(self, date: str, code: str, name: str, action: str, price: float, quantity: int, pnl_amt: float = 0.0, pnl_pct: float = 0.0):
         try:
-            amount = float(price * quantity)
+            # 중복 체크: 동일 날짜, 종목, 작업이 이미 있는지 확인
             with sqlite3.connect(self.user_db) as conn:
                 cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT 1 FROM trade_history 
+                    WHERE date = ? AND code = ? AND action = ?
+                """, (date, code, action))
+                if cursor.fetchone():
+                    logging.info(f"[DB] Trade record already exists for {name} ({code}) {action} on {date}. Skipping.")
+                    return
+
+                amount = float(price * quantity)
                 cursor.execute("""
                     INSERT INTO trade_history (date, code, name, action, price, quantity, amount, pnl_amt, pnl_pct)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -260,6 +269,17 @@ class DBManager:
         except Exception as e:
             logging.error(f"[DB] Fetch Trade History Error: {e}")
         return results
+
+    def has_trade_history_for_date(self, date: str) -> bool:
+        """해당 날짜에 거래 기록이 한 건이라도 있는지 확인"""
+        try:
+            with sqlite3.connect(self.user_db) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM trade_history WHERE date = ? LIMIT 1", (date,))
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logging.error(f"[DB] Check Trade History Error: {e}")
+            return False
 
     def create_user(self, username, password_hash):
         try:
