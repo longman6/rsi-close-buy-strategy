@@ -32,5 +32,6 @@
 
 ## 관련 파일
 - **데이터**: `stock.duckdb` (ohlcv_daily 테이블)
+- **연도별 수익률 상세 분석**: [yearly_returns_analysis.md](./yearly_returns_analysis.md)
 - **최적화 원본 데이터**: [optimization_rsi_results_survivorship_free.csv](./optimization_rsi_results_survivorship_free.csv)
 - **설정**: SMA[30-150], BUY[20-32], SELL[70-80], POS[3-10], HOLD[10-40]
