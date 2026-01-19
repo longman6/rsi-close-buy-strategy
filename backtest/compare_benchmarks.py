@@ -65,7 +65,7 @@ def analyze_benchmarks():
 2. **리스크 대비 성과**: RSI 4 전략의 경우 KOSPI 수준의 MDD(-19.88%)를 유지하면서도 수익률은 200%를 상회하여 가장 효율적인 '안정형' 모델로 평가됩니다.
 3. **결론**: 생존자 편향을 제거한 엄격한 테스트 환경에서도 RSI 기반 평균회귀 전략이 한국 시장(코스닥 150)에서 매우 유효함을 입증했습니다.
 """
-    with open('benchmark_comparison_report.md', 'w', encoding='utf-8') as f:
+    with open('../reports/benchmark_comparison_report.md', 'w', encoding='utf-8') as f:
         f.write(report)
     print("\nReport saved to benchmark_comparison_report.md")
 

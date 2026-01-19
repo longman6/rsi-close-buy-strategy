@@ -59,7 +59,7 @@ SMA_WINDOW = 50        # 이동평균선 기간 (100일선 -> 50)
 # ---------------------------------------------------------
 def get_kosdaq150_tickers():
     """Load KOSDAQ 150 tickers from local file 'kosdaq150_list.txt'."""
-    filename = 'data/kosdaq150_list.txt'
+    filename = '../data/kosdaq150_list.txt'
     tickers = []
     try:
         import ast
@@ -126,7 +126,7 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
     
     # 0. Check for Consolidated Pickle
     import glob
-    historical_dir = 'data/historical'
+    historical_dir = '../data/historical'
     pkl_files = glob.glob(os.path.join(historical_dir, "kosdaq150_combined_*.pkl"))
     
     loaded_from_pkl = False
@@ -532,13 +532,13 @@ def run_backtest():
 """
     print(summary)
     
-    with open("backtest_report.md", "a", encoding="utf-8") as f:
+    with open("../reports/backtest_report.md", "a", encoding="utf-8") as f:
         f.write(summary)
     print("✅ 리포트 저장 완료.")
 
 def get_kosdaq150_ticker_map():
     """Load KOSDAQ 150 tickers and names from local file 'kosdaq150_list.txt'."""
-    filename = 'kosdaq150_list.txt'
+    filename = '../data/kosdaq150_list.txt'
     ticker_map = {}
     try:
         import ast
@@ -705,7 +705,7 @@ def run_comparative_backtest():
     print(final_report)
     
     # Ensure directory exists
-    report_path = "reports/comparative_backtest_report.md"
+    report_path = "../reports/comparative_backtest_report.md"
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     
     with open(report_path, "w", encoding="utf-8") as f:

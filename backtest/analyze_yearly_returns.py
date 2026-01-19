@@ -12,7 +12,7 @@ import FinanceDataReader as fdr
 # 1. 설정 및 경로
 # ---------------------------------------------------------
 DB_PATH = '/home/longman6/projects/stock-collector/data/stock.duckdb'
-UNIVERSE_DIR = 'data/kosdaq150'
+UNIVERSE_DIR = '../data/kosdaq150'
 START_DATE = '2016-01-01'
 INITIAL_CAPITAL = 100_000_000
 
@@ -250,7 +250,7 @@ def main():
 
 *자료: DuckDB ohlcv_daily, FinanceDataReader (KS200, KQ150/KQ11)*
 """
-    with open('reports/yearly_returns_analysis.md', 'w', encoding='utf-8') as f:
+    with open('../reports/yearly_returns_analysis.md', 'w', encoding='utf-8') as f:
         f.write(report_content)
     print("\nReport saved to reports/yearly_returns_analysis.md")
 

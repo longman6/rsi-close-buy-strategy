@@ -12,7 +12,7 @@ from multiprocessing import Pool, Manager, cpu_count
 # 1. 설정 및 경로
 # ---------------------------------------------------------
 DB_PATH = '/home/longman6/projects/stock-collector/data/stock.duckdb'
-UNIVERSE_DIR = 'data/kosdaq150'
+UNIVERSE_DIR = '../data/kosdaq150'
 START_DATE = '2016-01-01'
 INITIAL_CAPITAL = 100_000_000
 REPORT_INTERVAL = 600 # 10분 (600초)
@@ -211,7 +211,7 @@ def run_optimization():
         # 더 세분화하려면 combinations를 쪼개서 수행해야 함.
 
     df = pd.DataFrame(results)
-    df.to_csv('optimization_rsi_results_survivorship_free.csv', index=False)
+    df.to_csv('../reports/optimization_rsi_results_survivorship_free.csv', index=False)
     
     top_each = df.sort_values('Ret', ascending=False).groupby('RSI_W').head(1)
     print("\nBest for each RSI Window:")
