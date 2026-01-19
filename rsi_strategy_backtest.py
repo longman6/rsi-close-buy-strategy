@@ -42,7 +42,7 @@ set_korean_font()
 START_DATE = '2010-01-01'
 INITIAL_CAPITAL = 100000000
 MAX_POSITIONS = 5
-MAX_HOLDING_DAYS = 40   # 최대 보유일 (영업일 기준 아님, 캘린더 일수)
+MAX_HOLDING_DAYS = 40   # 최대 보유일 (영업일 기준)
 ALLOCATION_PER_STOCK = 0.20
 TX_FEE_RATE = 0.00015   # 0.015% (매수/매도 각각)
 TAX_RATE = 0.0020       # 0.2% (매도 시)

@@ -69,9 +69,9 @@ class TradeManager:
 
     def get_holding_days(self, code, current_date_str=None, df=None):
         """
-        Calculate how many days held.
-        If df (DataFrame with DatetimeIndex) is provided, calculate number of trading days.
-        Else, calculate calendar days.
+        보유 일수 계산.
+        - df(OHLCV 데이터)가 제공되면: 영업일(Trading Days) 기준
+        - df가 없으면: 캘린더 일수(Calendar Days) 기준 (Fallback)
         """
         # If unknown, treat as 0 days held (Do NOT Force Sell)
         if code not in self.history["holdings"]:
@@ -138,7 +138,8 @@ class TradeManager:
 
     def can_buy(self, code):
         """
-        Check if stock can be bought (Loss Cooldown).
+        매수 가능 여부 확인 (손실 후 쿨다운 체크).
+        - 기준: 캘린더 일수 (Calendar Days)
         """
         if code not in self.history["last_trade"]:
             return True

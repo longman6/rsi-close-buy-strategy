@@ -327,6 +327,9 @@ def render_dashboard():
         # Fetch RSI for each (cached if possible, but real-time needed)
         progress_bar = st.progress(0)
         
+        total_eval_amt = 0.0
+        total_pnl_amt = 0.0
+        
         for i, h in enumerate(holdings):
             code = h['pdno']
             name = h['prdt_name']
@@ -365,8 +368,9 @@ def render_dashboard():
             c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2, 1, 0.8, 1.2, 1, 1.5, 1.5, 0.8])
             
             # 1. Name
-            url = f"https://finance.naver.com/item/main.naver?code={code}"
-            c1.markdown(f"[{name}]({url})\n`{code}`")
+            url_naver = f"https://finance.naver.com/item/main.naver?code={code}"
+            url_toss = f"https://www.tossinvest.com/stocks/A{code}/analytics"
+            c1.markdown(f"[{name}]({url_naver}) [\[T\]]({url_toss})\n`{code}`")
             
             # 2. Price
             c2.write(f"{curr:,.0f}\n({avg:,.0f})")
@@ -438,7 +442,19 @@ def render_dashboard():
             st.divider()
             progress_bar.progress((i + 1) / len(holdings))
             
+            # Update totals
+            total_eval_amt += eval_amt
+            total_pnl_amt += pnl_amt
+            
         progress_bar.empty()
+        
+        # --- Total Row ---
+        tc1, tc2, tc3, tc4, tc5, tc6, tc7, tc8 = st.columns([2, 1, 0.8, 1.2, 1, 1.5, 1.5, 0.8])
+        tc1.markdown("**Total**")
+        tc4.markdown(f"**{total_eval_amt:,.0f}**")
+        pnl_total_c = "red" if total_pnl_amt >= 0 else "blue"
+        tc6.markdown(f"**:{pnl_total_c}[{total_pnl_amt:,.0f}]**")
+        st.divider()
         
     else:
         st.info("No active positions.")
@@ -567,8 +583,6 @@ def render_ai_advice_page():
         
         # Expander Title
         price_fmt = f"{int(row['close_price']):,}" if pd.notna(row['close_price']) else "N/A"
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        
         # SMA Formatting
         sma_val = row.get('sma')
         is_above = row.get('is_above_sma')
@@ -580,7 +594,9 @@ def render_ai_advice_page():
         title = f":{color}[{summary}] **{name}** ({code}) | RSI: {rsi:.2f}{sma_str} | Close: {price_fmt} KRW"
         
         with st.expander(title):
-            st.markdown(f"### 🔗 [{name} ({code})]({url})")
+            url_naver = f"https://finance.naver.com/item/main.naver?code={code}"
+            url_toss = f"https://www.tossinvest.com/stocks/A{code}/analytics"
+            st.markdown(f"### 🔗 [{name} ({code})]({url_naver}) [\[T\]]({url_toss})")
             if not opinions:
                 st.caption("No advice details.")
             else:
@@ -705,9 +721,10 @@ def render_full_rsi_page():
         df_display = df[['code', 'name', 'rsi_fmt', 'low_rsi_fmt', 'close_fmt', 'sma_fmt', 'AI Rec']].copy()
         df_display.columns = ['Code', 'Name', f'RSI({config.RSI_WINDOW})', 'Low RSI', 'Close', f'SMA({config.SMA_WINDOW})', 'Consensus']
         
-        # Naver Link
+        # Links
         df_display['Name'] = df_display.apply(
-            lambda row: f"<a href='https://finance.naver.com/item/main.naver?code={row['Code']}' target='_blank'>{row['Name']}</a>", 
+            lambda row: f"<a href='https://finance.naver.com/item/main.naver?code={row['Code']}' target='_blank'>{row['Name']}</a> "
+                        f"<a href='https://www.tossinvest.com/stocks/A{row['Code']}/analytics' target='_blank'>[T]</a>", 
             axis=1
         )
         

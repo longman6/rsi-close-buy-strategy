@@ -19,7 +19,7 @@ import time
 # ============================================================
 DATA_START_DATE = '2008-01-01'
 TEST_START_DATE = '2010-01-01'
-RSI_WINDOW = 3
+RSI_WINDOW = 4
 LOSS_LOCKOUT_DAYS = 90
 INITIAL_CAPITAL = 100_000_000
 TX_FEE_RATE = 0.00015
@@ -33,7 +33,7 @@ N_JOBS = 20
 SMA_LIST = [30, 50, 70, 90, 110, 130, 150]          # 7개
 BUY_LIST = [20, 22, 24, 26, 28, 30, 32]             # 7개
 SELL_LIST = [70, 72, 74, 76, 78, 80]                # 6개
-POS_LIST = [4]                            # 1개 (고정)
+POS_LIST = [3, 5, 7, 10]                            # 4개
 HOLD_LIST = [10, 15, 20, 25, 30, 40]                # 6개
 
 # 글로벌 데이터 (워커 프로세스용)
@@ -258,125 +258,116 @@ def run_simulation(params):
 
 def main():
     print("=" * 70)
-    print("🚀 KOSDAQ 150 RSI 전략 그리드 서치 최적화")
+    print("🚀 KOSDAQ 150 RSI 전략 일괄 최적화 (RSI 3, 4, 5, 6, 7)")
     print("=" * 70)
     
-    # 조합 수 계산
-    all_combos = list(itertools.product(SMA_LIST, BUY_LIST, SELL_LIST, POS_LIST, HOLD_LIST))
-    total_combos = len(all_combos)
-    
-    print(f"""
-📋 고정 파라미터:
-  - RSI Window: {RSI_WINDOW}
-  - Loss Cooldown: {LOSS_LOCKOUT_DAYS} days
-  - 테스트 기간: {TEST_START_DATE} ~ 현재
-
-📊 최적화 범위:
-  - SMA Window: {SMA_LIST} ({len(SMA_LIST)}개)
-  - Buy Limit: {BUY_LIST} ({len(BUY_LIST)}개)
-  - Sell Limit: {SELL_LIST} ({len(SELL_LIST)}개)
-  - Max Positions: {POS_LIST} ({len(POS_LIST)}개)
-  - Max Holding: {HOLD_LIST} ({len(HOLD_LIST)}개)
-
-🧪 총 조합 수: {total_combos:,}개
-🖥️  병렬 처리: {N_JOBS} jobs
-""")
-    print("-" * 70)
-    
-    # 데이터 다운로드
+    # 데이터 다운로드 (1회 수행)
     tickers = get_kosdaq150_tickers()
     if not tickers:
         print("❌ 종목 로드 실패")
         return
     
-    stock_data, valid_tickers = download_stock_data(tickers, DATA_START_DATE)
-    if not valid_tickers:
-        print("❌ 유효한 데이터 없음")
-        return
+    # RSI 계산은 루프 내에서 수행할 것이므로 다운로드 시에는 지표 계산 제외
+    raw_stock_data = {}
+    valid_tickers = []
     
-    # 병렬 최적화 실행
-    print(f"\n⏳ 최적화 시작... ({total_combos:,}개 조합)")
-    start_time = time.time()
-    
-    results = []
-    completed = 0
-    
-    with Pool(processes=N_JOBS, initializer=init_worker, initargs=(stock_data, valid_tickers)) as pool:
-        for result in pool.imap_unordered(run_simulation, all_combos):
-            results.append(result)
-            completed += 1
+    total = len(tickers)
+    print(f"\n📥 {total}개 종목 데이터 다운로드 시작...")
+    for i, ticker in enumerate(tickers, 1):
+        try:
+            df = fdr.DataReader(ticker, DATA_START_DATE)
+            if df is None or df.empty or len(df) < 200:
+                continue
             
-            # 100개마다 또는 10% 단위로 진행률 출력
-            if completed % 100 == 0 or completed == total_combos:
-                elapsed = time.time() - start_time
-                pct = completed / total_combos * 100
-                eta = (elapsed / completed) * (total_combos - completed) / 60 if completed > 0 else 0
-                print(f"  📊 진행: {completed:,}/{total_combos:,} ({pct:.1f}%) | 경과: {elapsed/60:.1f}분 | 남은 시간: {eta:.1f}분", flush=True)
-    
-    elapsed = time.time() - start_time
-    print(f"\n✅ 최적화 완료! 소요 시간: {elapsed/60:.1f}분")
-    
-    # 결과 정리
-    results = [r for r in results if r is not None]
-    df = pd.DataFrame(results)
-    df = df[df['Trades'] > 10]  # 최소 거래 필터
-    df = df.sort_values('Return', ascending=False)
-    
-    # 결과 저장
-    os.makedirs('reports', exist_ok=True)
-    csv_path = 'reports/rsi3_maxpos4_optimization_results.csv'
-    df.to_csv(csv_path, index=False)
-    print(f"\n📁 전체 결과 저장: {csv_path}")
-    
-    # 상위 결과 출력
-    print("\n" + "=" * 70)
-    print("🏆 Top 10 수익률 순위")
-    print("=" * 70)
-    print(df.head(10).to_markdown(index=False, floatfmt=".2f"))
-    
-    # 안정형 Top 5 (MDD > -40%)
-    stable_df = df[df['MDD'] > -40].head(5)
-    if not stable_df.empty:
-        print("\n" + "=" * 70)
-        print("🛡️ 안정형 Top 5 (MDD > -40%)")
-        print("=" * 70)
-        print(stable_df.to_markdown(index=False, floatfmt=".2f"))
-    
-    # 보고서 저장
-    report_path = 'reports/rsi3_maxpos4_optimization_report.md'
-    with open(report_path, 'w', encoding='utf-8') as f:
-        f.write(f"""# KOSDAQ 150 RSI 전략 최적화 결과
-생성일: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-소요 시간: {elapsed/60:.1f}분
+            # 모든 SMA 사전 계산 (RSI와 무관하므로 1회만 수행)
+            for sma in SMA_LIST:
+                df[f'SMA_{sma}'] = df['Close'].rolling(window=sma).mean()
+            
+            raw_stock_data[ticker] = df
+            valid_tickers.append(ticker)
+            if i % 30 == 0:
+                print(f"  진행: {i}/{total} ({i/total*100:.1f}%)")
+        except:
+            pass
+    print(f"\n✅ 데이터 로드 완료: {len(valid_tickers)}개 종목")
 
-## 고정 파라미터
-- RSI Window: {RSI_WINDOW}
-- Loss Cooldown: {LOSS_LOCKOUT_DAYS} days
+    RSI_LIST = [3, 4, 5, 6, 7]
+    for rsi_win in RSI_LIST:
+        print("\n" + "#" * 70)
+        print(f"📈 RSI Window = {rsi_win} 최적화 시작")
+        print("#" * 70)
+        
+        # 해당 RSI에 맞춰 지표 재계산
+        stock_data = {}
+        for ticker, df in raw_stock_data.items():
+            df_copy = df.copy()
+            df_copy['RSI'] = calculate_rsi(df_copy['Close'], rsi_win)
+            stock_data[ticker] = df_copy
 
-## 최적화 범위
-| 파라미터 | 값 |
-|:---|:---|
-| SMA Window | {SMA_LIST} |
-| Buy Limit | {BUY_LIST} |
-| Sell Limit | {SELL_LIST} |
-| Max Positions | {POS_LIST} |
-| Max Holding | {HOLD_LIST} |
+        # 조합 수 계산
+        all_combos = list(itertools.product(SMA_LIST, BUY_LIST, SELL_LIST, POS_LIST, HOLD_LIST))
+        total_combos = len(all_combos)
+        
+        print(f"🧪 총 조합 수: {total_combos:,}개 | 병렬 처리: {N_JOBS} jobs")
+        start_time = time.time()
+        
+        results = []
+        completed = 0
+        
+        with Pool(processes=N_JOBS, initializer=init_worker, initargs=(stock_data, valid_tickers)) as pool:
+            for result in pool.imap_unordered(run_simulation, all_combos):
+                results.append(result)
+                completed += 1
+                if completed % 100 == 0 or completed == total_combos:
+                    elapsed = time.time() - start_time
+                    pct = completed / total_combos * 100
+                    eta = (elapsed / completed) * (total_combos - completed) / 60 if completed > 0 else 0
+                    print(f"  [RSI {rsi_win}] 📊 진행: {completed:,}/{total_combos:,} ({pct:.1f}%) | 경과: {elapsed/60:.1f}분 | 남은: {eta:.1f}분", flush=True)
+        
+        elapsed = time.time() - start_time
+        print(f"\n✅ RSI {rsi_win} 최적화 완료! 소요 시간: {elapsed/60:.1f}분")
+        
+        # 결과 정리 및 저장
+        results = [r for r in results if r is not None]
+        df_res = pd.DataFrame(results)
+        df_res = df_res[df_res['Trades'] > 10]
+        df_res = df_res.sort_values('Return', ascending=False)
+        
+        os.makedirs('reports', exist_ok=True)
+        # 파일명 결정
+        if rsi_win == 3:
+            csv_path = 'reports/rsi_optimization_results.csv'
+            report_path = 'reports/rsi_optimization_report.md'
+        elif rsi_win == 5:
+            csv_path = 'reports/rsi5_optimization_results.csv'
+            report_path = 'reports/rsi5_optimization_report.md'
+        else:
+            csv_path = f'reports/rsi{rsi_win}_optimization_results.csv'
+            report_path = f'reports/rsi{rsi_win}_optimization_report.md'
+            
+        df_res.to_csv(csv_path, index=False)
+        
+        # 상위 결과 및 안정형 결과 추출
+        top_10 = df_res.head(10)
+        stable_df = df_res[df_res['MDD'] > -40].head(5)
+        
+        # 보고서 작성
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(f"# KOSDAQ 150 RSI {rsi_win} 전략 최적화 결과\n")
+            f.write(f"생성일: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"소요 시간: {elapsed/60:.1f}분\n\n")
+            f.write(f"## 고정 파라미터\n- RSI Window: {rsi_win}\n- Loss Cooldown: {LOSS_LOCKOUT_DAYS} days\n\n")
+            f.write(f"## 최적화 범위\n| 파라미터 | 값 |\n|:---|:---|\n")
+            f.write(f"| SMA Window | {SMA_LIST} |\n| Buy Limit | {BUY_LIST} |\n| Sell Limit | {SELL_LIST} |\n")
+            f.write(f"| Max Positions | {POS_LIST} |\n| Max Holding | {HOLD_LIST} |\n\n")
+            f.write(f"## 총 조합: {total_combos:,}개\n\n---\n\n")
+            f.write(f"## 🏆 Top 10 수익률 순위\n{top_10.to_markdown(index=False, floatfmt='.2f')}\n\n---\n\n")
+            f.write(f"## 🛡️ 안정형 Top 5 (MDD > -40%)\n")
+            f.write(f"{stable_df.to_markdown(index=False, floatfmt='.2f') if not stable_df.empty else '해당 없음'}\n")
+        
+        print(f"📁 결과 저장 완료: {csv_path}, {report_path}")
 
-## 총 조합: {total_combos:,}개
-
----
-
-## 🏆 Top 10 수익률 순위
-{df.head(10).to_markdown(index=False, floatfmt=".2f")}
-
----
-
-## 🛡️ 안정형 Top 5 (MDD > -40%)
-{stable_df.to_markdown(index=False, floatfmt=".2f") if not stable_df.empty else "해당 없음"}
-""")
-    
-    print(f"\n📊 보고서 저장: {report_path}")
-    print(f"⏰ 완료: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"\n✨ 모든 RSI 최적화 작업이 완료되었습니다! ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
 
 if __name__ == "__main__":
     freeze_support()
