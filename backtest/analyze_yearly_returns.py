@@ -12,7 +12,7 @@ import FinanceDataReader as fdr
 # 1. 설정 및 경로
 # ---------------------------------------------------------
 DB_PATH = '/home/longman6/projects/stock-collector/data/stock.duckdb'
-UNIVERSE_DIR = '../data/kosdaq150'
+UNIVERSE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'kosdaq150'))
 START_DATE = '2016-01-01'
 INITIAL_CAPITAL = 100_000_000
 
@@ -84,6 +84,7 @@ def run_backtest_yearly(strategy, u_map, all_dates, stock_data_rsi):
     cash = INITIAL_CAPITAL
     positions = {}
     equity_curve = []
+    trades_log = [] # To track trade dates
     
     current_year_cached = 0
     relevant_data = {}
@@ -126,6 +127,8 @@ def run_backtest_yearly(strategy, u_map, all_dates, stock_data_rsi):
             sell_val = pos['shares'] * price
             cost = sell_val * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
             cash += (sell_val - cost)
+            # 거래 기록 (매도일 기준)
+            trades_log.append({'date': current_date})
             
         # 2. 매수
         open_slots = max_pos - len(positions)
@@ -170,7 +173,16 @@ def run_backtest_yearly(strategy, u_map, all_dates, stock_data_rsi):
             yr_ret = (end_val / start_val - 1) * 100
             yearly_returns[yr] = yr_ret
             
-    return yearly_returns
+    # 연도별 거래 횟수 계산
+    yearly_counts = {yr: 0 for yr in years}
+    if trades_log:
+        trades_df = pd.DataFrame(trades_log)
+        trades_df['year'] = pd.to_datetime(trades_df['date']).dt.year
+        counts = trades_df['year'].value_counts()
+        for yr, cnt in counts.items():
+            yearly_counts[yr] = cnt
+            
+    return yearly_returns, yearly_counts
 
 def main():
     u_map = load_universe_map(UNIVERSE_DIR)
@@ -182,18 +194,20 @@ def main():
     data_map = fetch_data_for_strategies(conn, u_map, rsi_windows)
     
     all_yearly_results = {}
+    all_yearly_counts = {}
     
-    # 1. 전략별 연도별 수익률
+    # 1. 전략별 연도별 수익률 및 거래 횟수
     for strat in STRATEGIES:
         print(f"Analyzing {strat['name']}...")
-        rets = run_backtest_yearly(strat, u_map, all_dates, data_map[strat['rsi_w']])
+        rets, counts = run_backtest_yearly(strat, u_map, all_dates, data_map[strat['rsi_w']])
         all_yearly_results[strat['name']] = rets
+        all_yearly_counts[strat['name']] = counts
         
     # 2. 코스피 200 및 코스닥 150 연도별 수익률
     print("Fetching Market Indices...")
     indices = {
         'KOSPI 200': 'KS200',
-        'KOSDAQ 150': 'KQ150' # FDR에서 코스닥 150 인덱스 지원 여부 확인 필요, 안되면 KQ11 사용
+        'KOSDAQ 150': 'KQ150'
     }
     
     for idx_name, idx_code in indices.items():
@@ -228,9 +242,12 @@ def main():
             end_price = yr_data['Close'].iloc[-1]
             idx_yearly[yr] = (end_price / start_price - 1) * 100
         all_yearly_results[idx_name] = idx_yearly
+        all_yearly_counts[idx_name] = {yr: '-' for yr in years} # 지수는 거래 횟수 없음
     
     # 결과 출력
     final_df = pd.DataFrame(all_yearly_results)
+    counts_df = pd.DataFrame(all_yearly_counts)
+    
     print("\n### 연도별 수익률 비교 (Unit: %)")
     print(final_df.to_markdown())
     
@@ -240,19 +257,24 @@ def main():
 
 본 보고서는 상위 3개 RSI 최적화 전략의 연도별 성과를 코스피 200 및 코스닥 150 지수와 비교 분석한 결과입니다.
 
-## 연도별 수익률 비교 (%)
+## 1. 연도별 수익률 비교 (%)
 {final_df.to_markdown()}
+
+## 2. 연도별 거래 횟수 (회)
+{counts_df.to_markdown()}
 
 ## 주요 분석 결과
 - **시장 대비 성과**: 주력 전략들이 대부분의 연도에서 코스피 200 및 코스닥 150을 상회하는지 확인할 수 있습니다.
 - **안정성**: 하락장(예: 2018, 2022)에서의 방어력을 확인할 수 있습니다.
 - **장기 요약**: 누적 수익률뿐만 아니라 연도별 일관성 있는 수익 창출 능력을 보여줍니다.
+- **거래 빈도**: 특정 연도(예: 상승장)에 거래가 적거나 없을 수 있음을 '거래 횟수' 표에서 확인할 수 있습니다. 이는 역추세 전략의 정상적인 특성입니다.
 
 *자료: DuckDB ohlcv_daily, FinanceDataReader (KS200, KQ150/KQ11)*
 """
-    with open('../reports/yearly_returns_analysis.md', 'w', encoding='utf-8') as f:
+    report_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'reports', 'yearly_returns_analysis.md'))
+    with open(report_path, 'w', encoding='utf-8') as f:
         f.write(report_content)
-    print("\nReport saved to reports/yearly_returns_analysis.md")
+    print(f"\nReport saved to {report_path}")
 
 if __name__ == "__main__":
     main()
