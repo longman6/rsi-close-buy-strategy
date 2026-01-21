@@ -71,7 +71,8 @@ reports/       # 백테스트 결과 보고서
 - **DuckDB 경로**: `/home/longman6/projects/stock-collector/data/stock.duckdb`
 - **스키마 문서**: `/home/longman6/projects/stock-collector/docs/01-DATABASE-SCHEMA.md`
 - 데이터 조회 시 위 DuckDB에서 우선적으로 찾을 것
-- read_only=True 로 DB를 오픈할 것 
+- **DuckDB 연결**: 데이터 무결성 및 잠금(locking) 방지를 위해 **반드시** `read_only=True` 옵션을 사용하여 연결할 것
+  - 예시: `conn = duckdb.connect(DB_PATH, read_only=True)`
 
 ### 결과 저장
 
