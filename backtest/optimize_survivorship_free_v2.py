@@ -12,7 +12,7 @@ from multiprocessing import Pool, Manager, cpu_count
 # 1. 설정 및 경로
 # ---------------------------------------------------------
 DB_PATH = '/home/longman6/projects/stock-collector/data/stock.duckdb'
-UNIVERSE_DIR = '../data/kosdaq150'
+UNIVERSE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'data', 'kosdaq150'))
 START_DATE = '2016-01-01'
 INITIAL_CAPITAL = 100_000_000
 REPORT_INTERVAL = 600 # 10분 (600초)
@@ -93,6 +93,7 @@ def run_backtest_core(params):
     history = []
     trades_count = 0
     wins = 0
+    lockout_until = {} # {symbol: expiry_date}
     
     current_year = 0
     relevant_data = {}
@@ -138,6 +139,9 @@ def run_backtest_core(params):
             cash += (sell_val - cost)
             if (sell_val - cost) > (pos['shares'] * pos['buy_price'] * (1+TX_FEE_RATE+SLIPPAGE_RATE)):
                 wins += 1
+            else:
+                # 손실 발생 시 90일 쿨다운 설정
+                lockout_until[s] = current_date + timedelta(days=90)
             trades_count += 1
             
         # 2. 매수
@@ -146,6 +150,13 @@ def run_backtest_core(params):
             candidates = []
             for s, df in relevant_data.items():
                 if s in positions or current_date not in df.index: continue
+                # 쿨다운 체크
+                if s in lockout_until:
+                    if current_date <= lockout_until[s]:
+                        continue
+                    else:
+                        del lockout_until[s]
+                
                 row = df.loc[current_date]
                 if pd.isna(row['SMA']) or pd.isna(row[f'RSI_{rsi_window}']): continue
                 
@@ -180,7 +191,7 @@ def run_optimization():
     dates = conn.execute(f"SELECT DISTINCT date FROM ohlcv_daily WHERE date >= '{START_DATE}' ORDER BY date").df()['date'].tolist()
     dates = pd.to_datetime(dates)
     
-    rsi_windows = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    rsi_windows = [3, 4, 5, 6, 7]
     stock_data_base = fetch_all_data(conn, u_map, rsi_windows)
     
     # 파라미터 그리드 (사용자 지정 범위)
@@ -211,10 +222,14 @@ def run_optimization():
         # 더 세분화하려면 combinations를 쪼개서 수행해야 함.
 
     df = pd.DataFrame(results)
-    df.to_csv('../reports/optimization_rsi_results_survivorship_free.csv', index=False)
+    report_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'reports'))
+    os.makedirs(report_dir, exist_ok=True)
+    
+    csv_path = os.path.join(report_dir, 'optimization_rsi_results_survivorship_free_cooldown.csv')
+    df.to_csv(csv_path, index=False)
     
     top_each = df.sort_values('Ret', ascending=False).groupby('RSI_W').head(1)
-    print("\nBest for each RSI Window:")
+    print("\nBest for each RSI Window (With 90d Cooldown):")
     print(top_each.to_markdown())
 
 if __name__ == "__main__":
