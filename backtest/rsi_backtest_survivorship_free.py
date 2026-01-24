@@ -16,10 +16,10 @@ START_DATE = '2016-01-01'
 INITIAL_CAPITAL = 100_000_000
 MAX_POSITIONS = 3
 MAX_HOLDING_DAYS = 20
-RSI_WINDOW = 6
-BUY_THRESHOLD = 30
-SELL_THRESHOLD = 70
-SMA_WINDOW = 50
+RSI_WINDOW = 4
+BUY_THRESHOLD = 22
+SELL_THRESHOLD = 80
+SMA_WINDOW = 30
 LOSS_COOLDOWN_DAYS = 90
 
 # 수수료율 설정
@@ -76,13 +76,11 @@ def calculate_rsi(prices, window=3):
 
 def get_ohlcv_data(conn, symbols, start_date):
     """DuckDB에서 OHLCV 데이터 로드 및 지표 계산"""
-    # SMA 및 RSI 계산을 위해 시작일보다 넉넉하게 가져옴
     fetch_start = (pd.to_datetime(start_date) - timedelta(days=400)).strftime('%Y-%m-%d')
     
-    # DuckDB에서는 IN 절에 너무 많은 인자가 들어가면 성능 저하가 있을 수 있으나 150개면 괜찮음
     symbols_str = ", ".join([f"'{s}'" for s in symbols])
     query = f"""
-    SELECT symbol, date, close
+    SELECT symbol, date, open, close
     FROM ohlcv_daily
     WHERE symbol IN ({symbols_str}) AND date >= '{fetch_start}'
     ORDER BY symbol, date
@@ -110,75 +108,55 @@ def run_backtest():
     universe_map = load_universe_map(UNIVERSE_DIR)
     conn = duckdb.connect(DB_PATH, read_only=True)
     
-    # 전체 거래일 리스트 (DB에서 가장 거래가 많은 종목 기준으로 추출 - 인덱스 대용)
     all_dates = conn.execute("SELECT DISTINCT date FROM ohlcv_daily WHERE date >= '2016-01-01' ORDER BY date").df()['date'].tolist()
     all_dates = pd.to_datetime(all_dates)
     
     cash = INITIAL_CAPITAL
-    positions = {} # {symbol: {'shares': n, 'buy_price': p, 'buy_date': d, 'held_days': 0}}
+    positions = {}
     history = []
     trades = []
-    lockout_until = {} # {symbol: expiry_date}
+    lockout_until = {}
+    
+    # 익일 시가 매매를 위한 시그널 저장
+    pending_buys = []
+    pending_sells = []
     
     current_year = 0
     stock_data = {}
     
-    print(f"🚀 Starting backtest from {START_DATE}...")
+    print(f"Starting backtest from {START_DATE}...")
 
-    for current_date in all_dates:
+    for i, current_date in enumerate(all_dates):
         year = current_date.year
         
-        # 유니버스 업데이트 (연도가 바뀔 때)
         if year != current_year:
-            print(f"\n--- Entering Year {year} ---")
+            print(f"--- Entering Year {year} ---")
             current_year = year
             symbols = universe_map.get(year, [])
             if not symbols:
                 print(f"Warning: No universe found for year {year}. Using previous year's universe.")
             else:
-                # 새로운 연도 종목 데이터 로드
-                stock_data = get_ohlcv_data(conn, symbols, START_DATE)
+                # 보유 중인 종목도 포함하여 데이터 로드
+                held_symbols = list(positions.keys())
+                fetch_symbols = list(set(symbols + held_symbols))
+                stock_data = get_ohlcv_data(conn, fetch_symbols, START_DATE)
         
-        # 1. 매도 로직
-        current_equity = cash
-        symbols_to_sell = []
-        
-        for symbol, pos in positions.items():
-            if symbol not in stock_data or current_date not in stock_data[symbol].index:
-                # 데이터가 없는 날은 마지막 가격 유지
-                current_equity += pos['shares'] * pos['last_price']
-                continue
+        # 1. 전일 시그널 기반 매매 집행 (당일 시가)
+        # 매도 집행
+        for symbol, reason in pending_sells:
+            if symbol not in positions: continue
+            if symbol not in stock_data or current_date not in stock_data[symbol].index: continue
             
-            row = stock_data[symbol].loc[current_date]
-            close_price = row['close']
-            rsi = row['RSI']
-            pos['last_price'] = close_price
-            pos['held_days'] += 1
+            open_price = stock_data[symbol].loc[current_date]['open']
+            if pd.isna(open_price): continue
             
-            current_equity += pos['shares'] * close_price
-            
-            # 매도 조건 check
-            sell_reason = None
-            if rsi >= SELL_THRESHOLD:
-                sell_reason = 'RSI_EXIT'
-            elif pos['held_days'] >= MAX_HOLDING_DAYS:
-                sell_reason = 'TIME_EXIT'
-            
-            if sell_reason:
-                symbols_to_sell.append((symbol, close_price, sell_reason))
-        
-        history.append({'date': current_date, 'equity': current_equity})
-        
-        # 매도 실행
-        for symbol, price, reason in symbols_to_sell:
             pos = positions.pop(symbol)
-            sell_val = pos['shares'] * price
+            sell_val = pos['shares'] * open_price
             fee_tax = sell_val * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
             cash += (sell_val - fee_tax)
             
             pnl_perc = ((sell_val - fee_tax) / (pos['shares'] * pos['buy_price'] * (1+TX_FEE_RATE+SLIPPAGE_RATE)) - 1) * 100
             
-            # Loss Cooldown 설정
             if pnl_perc < 0:
                 lockout_until[symbol] = current_date + timedelta(days=LOSS_COOLDOWN_DAYS)
                 
@@ -187,55 +165,98 @@ def run_backtest():
                 'buy_date': pos['buy_date'],
                 'sell_date': current_date,
                 'buy_price': pos['buy_price'],
-                'sell_price': price,
+                'sell_price': open_price,
                 'pnl_perc': pnl_perc,
                 'reason': reason,
                 'held_days': pos['held_days']
             })
-
-        # 2. 매수 로직
+        pending_sells = []
+        
+        # 매수 집행
         open_slots = MAX_POSITIONS - len(positions)
-        if open_slots > 0:
+        for cand in pending_buys[:open_slots]:
+            symbol = cand['symbol']
+            if symbol in positions: continue
+            if symbol not in stock_data or current_date not in stock_data[symbol].index: continue
+            
+            open_price = stock_data[symbol].loc[current_date]['open']
+            
+            # Debugging check
+            if pd.isna(open_price) or open_price == 0:
+                continue
+            
+            current_equity = cash + sum(p['shares']*p['last_price'] for p in positions.values())
+            buy_unit = current_equity / MAX_POSITIONS
+            if cash < buy_unit:
+                buy_unit = cash
+            
+            buy_amount = buy_unit / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
+            shares = int(buy_amount / open_price)
+            
+            if shares > 0:
+                total_cost = shares * open_price * (1 + TX_FEE_RATE + SLIPPAGE_RATE)
+                cash -= total_cost
+                positions[symbol] = {
+                    'shares': shares,
+                    'buy_price': open_price,
+                    'last_price': open_price,
+                    'buy_date': current_date,
+                    'held_days': 0
+                }
+        pending_buys = []
+        
+        # 2. 포지션 업데이트 및 자산 평가 (당일 종가 기준)
+        current_equity = cash
+        for symbol, pos in positions.items():
+            if symbol not in stock_data or current_date not in stock_data[symbol].index:
+                current_equity += pos['shares'] * pos['last_price']
+                continue
+            
+            row = stock_data[symbol].loc[current_date]
+            close_price = row['close']
+            pos['last_price'] = close_price
+            pos['held_days'] += 1
+            current_equity += pos['shares'] * close_price
+        
+        history.append({'date': current_date, 'equity': current_equity})
+        
+        # 3. 당일 종가 기준 시그널 생성 (익일 시가 매매용)
+        # 매도 시그널
+        for symbol, pos in positions.items():
+            if symbol not in stock_data or current_date not in stock_data[symbol].index: continue
+            row = stock_data[symbol].loc[current_date]
+            rsi = row['RSI']
+            if pd.isna(rsi): continue
+            
+            sell_reason = None
+            if rsi >= SELL_THRESHOLD:
+                sell_reason = 'RSI_EXIT'
+            elif pos['held_days'] >= MAX_HOLDING_DAYS:
+                sell_reason = 'TIME_EXIT'
+            
+            if sell_reason:
+                pending_sells.append((symbol, sell_reason))
+        
+        # 매수 시그널
+        open_slots_next = MAX_POSITIONS - len(positions) + len(pending_sells)
+        if open_slots_next > 0:
             candidates = []
             for symbol, data in stock_data.items():
                 if symbol in positions: continue
                 if current_date not in data.index: continue
                 
+                if symbol in lockout_until:
+                    if current_date <= lockout_until[symbol]: continue
+                    else: del lockout_until[symbol]
+                
                 row = data.loc[current_date]
                 
-                # 쿨다운 체크
-                if symbol in lockout_until:
-                    if current_date <= lockout_until[symbol]:
-                        continue
-                    else:
-                        del lockout_until[symbol]
-                        
-                # RSI <= Threshold AND Price > SMA
                 if row['RSI'] <= BUY_THRESHOLD and row['close'] > row['SMA']:
-                    candidates.append({'symbol': symbol, 'rsi': row['RSI'], 'price': row['close']})
+                    candidates.append({'symbol': symbol, 'rsi': row['RSI']})
             
-            # RSI 낮은 순으로 정렬하여 매수
             candidates = sorted(candidates, key=lambda x: x['rsi'])
-            for cand in candidates[:open_slots]:
-                buy_unit = current_equity / MAX_POSITIONS
-                if cash < buy_unit:
-                    buy_unit = cash
-                
-                buy_amount = buy_unit / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
-                shares = int(buy_amount / cand['price'])
-                
-                if shares > 0:
-                    total_cost = shares * cand['price'] * (1 + TX_FEE_RATE + SLIPPAGE_RATE)
-                    cash -= total_cost
-                    positions[cand['symbol']] = {
-                        'shares': shares,
-                        'buy_price': cand['price'],
-                        'last_price': cand['price'],
-                        'buy_date': current_date,
-                        'held_days': 0
-                    }
+            pending_buys = candidates[:open_slots_next]
 
-    # 결과 리포트 생성
     history_df = pd.DataFrame(history).set_index('date')
     trades_df = pd.DataFrame(trades)
     
@@ -266,7 +287,7 @@ def generate_report(history_df, trades_df):
         yearly_returns_table += f"| {year} | {ret:.2f}% |\n"
 
     report = f"""
-# 백테스트 결과 리포트 (생존자 편향 제거)
+# 백테스트 결과 리포트 (생존자 편향 제거 - 필터 없음)
 
 - **기간**: {history_df.index[0].strftime('%Y-%m-%d')} ~ {history_df.index[-1].strftime('%Y-%m-%d')}
 - **초기 자본**: {INITIAL_CAPITAL:,}원
@@ -298,7 +319,7 @@ def generate_report(history_df, trades_df):
     # 차트 저장
     plt.figure(figsize=(12, 6))
     plt.plot(history_df.index, history_df['equity'], label='Portfolio Equity')
-    plt.title('Survivorship-Bias-Free Backtest: RSI 3 Strategy')
+    plt.title('Survivorship-Bias-Free Backtest: RSI 4 Strategy (No Filter)')
     plt.xlabel('Date')
     plt.ylabel('Equity (KRW)')
     plt.grid(True)

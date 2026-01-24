@@ -20,11 +20,11 @@ TX_FEE_RATE = 0.00015
 TAX_RATE = 0.0020
 SLIPPAGE_RATE = 0.001
 
-# 상위 3개 전략 파라미터 (90일 쿨다운 적용 결과)
+# 상위 3개 전략 파라미터 (익일 시가 + True Survivorship 최적화 결과)
 STRATEGIES = [
-    {'name': 'RSI 6', 'rsi_w': 6, 'sma_w': 50, 'buy': 30, 'sell': 70, 'hold': 20, 'pos': 3},
-    {'name': 'RSI 3', 'rsi_w': 3, 'sma_w': 90, 'buy': 26, 'sell': 80, 'hold': 15, 'pos': 3},
-    {'name': 'RSI 5', 'rsi_w': 5, 'sma_w': 150, 'buy': 24, 'sell': 80, 'hold': 25, 'pos': 3}
+    {'name': 'RSI 4', 'rsi_w': 4, 'sma_w': 30, 'buy': 22, 'sell': 80, 'hold': 20, 'pos': 3},
+    {'name': 'RSI 3', 'rsi_w': 3, 'sma_w': 90, 'buy': 28, 'sell': 78, 'hold': 30, 'pos': 3},
+    {'name': 'RSI 6', 'rsi_w': 6, 'sma_w': 50, 'buy': 22, 'sell': 70, 'hold': 20, 'pos': 5}
 ]
 
 def load_universe_map(directory):
@@ -60,7 +60,7 @@ def fetch_data_for_strategies(conn, universe_map, rsi_windows):
     fetch_start = '2015-01-01'
     
     print(f"Loading data from DuckDB...")
-    query = f"SELECT symbol, date, close FROM ohlcv_daily WHERE symbol IN ({symbols_str}) AND date >= '{fetch_start}' ORDER BY symbol, date"
+    query = f"SELECT symbol, date, open, close FROM ohlcv_daily WHERE symbol IN ({symbols_str}) AND date >= '{fetch_start}' ORDER BY symbol, date"
     df = conn.execute(query).df()
     
     data_map = {}
@@ -84,29 +84,77 @@ def run_backtest_yearly(strategy, u_map, all_dates, stock_data_rsi):
     cash = INITIAL_CAPITAL
     positions = {}
     equity_curve = []
-    trades_log = [] # To track trade dates
-    lockout_until = {} # {symbol: expiry_date}
+    trades_log = []
+    lockout_until = {}
+    
+    # 익일 시가 매매를 위한 시그널 저장
+    pending_buys = []
+    pending_sells = []
     
     current_year_cached = 0
     relevant_data = {}
     
     from datetime import timedelta
     
-    for current_date in all_dates:
+    for i, current_date in enumerate(all_dates):
         year = current_date.year
         if year != current_year_cached:
             current_year_cached = year
             symbols = u_map.get(year, [])
+            # Filter relevant data for this year's symbols AND currently held positions
+            held_symbols = list(positions.keys())
+            target_symbols = set(symbols + held_symbols)
+            
             relevant_data = {}
-            for s in symbols:
+            for s in target_symbols:
                 if s in stock_data_rsi:
                     df = stock_data_rsi[s].copy()
                     df['SMA'] = df['close'].rolling(window=sma_window).mean()
                     relevant_data[s] = df
         
-        # 1. 매도
+        # 1. 전일 시그널 기반 매매 집행 (당일 시가)
+        # 매도 집행
+        for s in pending_sells:
+            if s not in positions: continue
+            if s not in relevant_data or current_date not in relevant_data[s].index: continue
+            
+            open_price = relevant_data[s].loc[current_date]['open']
+            if pd.isna(open_price): continue
+            
+            pos = positions.pop(s)
+            sell_val = pos['shares'] * open_price
+            cost = sell_val * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
+            cash += (sell_val - cost)
+            pnl = (sell_val - cost) / (pos['shares'] * pos['buy_price'] * (1+TX_FEE_RATE+SLIPPAGE_RATE)) - 1
+            if pnl < 0:
+                lockout_until[s] = current_date + timedelta(days=90)
+            trades_log.append({'date': current_date})
+        pending_sells = []
+        
+        # 매수 집행
+        open_slots = max_pos - len(positions)
+        for cand in pending_buys[:open_slots]:
+            s = cand['s']
+            if s in positions: continue
+            if s not in relevant_data or current_date not in relevant_data[s].index: continue
+            
+            open_price = relevant_data[s].loc[current_date]['open']
+            if pd.isna(open_price) or open_price == 0: continue
+            
+            target = (cash + sum(p['shares']*p['last_price'] for p in positions.values())) / max_pos
+            buy_amt = min(target, cash) / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
+            if open_price > 0:
+                shares = int(buy_amt / open_price)
+            else:
+                shares = 0
+            if shares > 0:
+                cost = shares * open_price * (1 + TX_FEE_RATE + SLIPPAGE_RATE)
+                cash -= cost
+                positions[s] = {'shares': shares, 'buy_price': open_price, 'last_price': open_price, 'held': 0}
+        pending_buys = []
+        
+        # 2. 포지션 업데이트 및 자산 평가 (당일 종가 기준)
         curr_positions_val = 0
-        to_sell = []
         for s, pos in positions.items():
             if s not in relevant_data or current_date not in relevant_data[s].index:
                 curr_positions_val += pos['shares'] * pos['last_price']
@@ -114,57 +162,42 @@ def run_backtest_yearly(strategy, u_map, all_dates, stock_data_rsi):
             
             row = relevant_data[s].loc[current_date]
             close = row['close']
-            rsi = row[f'RSI_{rsi_window}']
             pos['last_price'] = close
             pos['held'] += 1
             curr_positions_val += pos['shares'] * close
-            
-            if rsi >= sell_threshold or pos['held'] >= max_hold:
-                to_sell.append((s, close))
         
         total_equity = cash + curr_positions_val
         equity_curve.append({'date': current_date, 'equity': total_equity})
         
-        for s, price in to_sell:
-            pos = positions.pop(s)
-            sell_val = pos['shares'] * price
-            cost = sell_val * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
-            cash += (sell_val - cost)
-            # 거래 기록 (매도일 기준)
-            pnl = (sell_val - cost) / (pos['shares'] * pos['buy_price'] * (1+TX_FEE_RATE+SLIPPAGE_RATE)) - 1
-            if pnl < 0:
-                lockout_until[s] = current_date + timedelta(days=90)
-                
-            trades_log.append({'date': current_date})
+        # 3. 당일 종가 기준 시그널 생성 (익일 시가 매매용)
+        # 매도 시그널
+        for s, pos in positions.items():
+            if s not in relevant_data or current_date not in relevant_data[s].index: continue
+            row = relevant_data[s].loc[current_date]
+            rsi = row[f'RSI_{rsi_window}']
+            if pd.isna(rsi): continue
             
-        # 2. 매수
-        open_slots = max_pos - len(positions)
-        if open_slots > 0:
+            if rsi >= sell_threshold or pos['held'] >= max_hold:
+                pending_sells.append(s)
+        
+        # 매수 시그널
+        open_slots_next = max_pos - len(positions) + len(pending_sells)
+        if open_slots_next > 0:
             candidates = []
             for s, df in relevant_data.items():
                 if s in positions or current_date not in df.index: continue
-                # 쿨다운 체크
                 if s in lockout_until:
-                    if current_date <= lockout_until[s]:
-                        continue
-                    else:
-                        del lockout_until[s]
-                        
+                    if current_date <= lockout_until[s]: continue
+                    else: del lockout_until[s]
+                
                 row = df.loc[current_date]
                 if pd.isna(row['SMA']) or pd.isna(row[f'RSI_{rsi_window}']): continue
                 
                 if row[f'RSI_{rsi_window}'] <= buy_threshold and row['close'] > row['SMA']:
-                    candidates.append({'s': s, 'rsi': row[f'RSI_{rsi_window}'], 'p': row['close']})
+                    candidates.append({'s': s, 'rsi': row[f'RSI_{rsi_window}']})
             
             candidates.sort(key=lambda x: x['rsi'])
-            for cand in candidates[:open_slots]:
-                target = (cash + sum(p['shares']*p['last_price'] for p in positions.values())) / max_pos
-                buy_amt = min(target, cash) / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
-                shares = int(buy_amt / cand['p'])
-                if shares > 0:
-                    cost = shares * cand['p'] * (1 + TX_FEE_RATE + SLIPPAGE_RATE)
-                    cash -= cost
-                    positions[cand['s']] = {'shares': shares, 'buy_price': cand['p'], 'last_price': cand['p'], 'held': 0}
+            pending_buys = candidates[:open_slots_next]
 
     # 연도별 수익률 계산
     eq_df = pd.DataFrame(equity_curve).set_index('date')
@@ -279,10 +312,9 @@ def main():
 
 ## 주요 분석 결과
 - **90일 손실 쿨다운 적용**: 손실 발생 종목에 대해 90일간 재매수를 금지하는 로직이 적용된 결과입니다.
-- **시장 대비 성과**: 주력 전략들이 대부분의 연도에서 코스피 200 및 코스닥 150을 상회하는지 확인할 수 있습니다.
-- **안정성**: 하락장(예: 2018, 2022)에서의 방어력을 확인할 수 있습니다.
-- **장기 요약**: 누적 수익률뿐만 아니라 연도별 일관성 있는 수익 창출 능력을 보여줍니다.
-- **거래 빈도**: 특정 연도(예: 상승장)에 거래가 적거나 없을 수 있음을 '거래 횟수' 표에서 확인할 수 있습니다. 이는 역추세 전략의 정상적인 특성입니다.
+- **RSI 4 전략**: 익일 시가 매매 및 생존자 편향이 제거된 환경에서 가장 우수한 성과를 보였습니다.
+- **시장 대비 성과**: 하락장(예: 2018, 2022)에서의 방어력과 상승장(예: 2020)에서의 수익 창출 능력을 확인할 수 있습니다.
+- **거래 빈도**: 역추세 전략의 특성상 특정 연도에 거래가 집중되거나 적을 수 있습니다.
 
 *자료: DuckDB ohlcv_daily, FinanceDataReader (KS200, KQ150/KQ11)*
 """

@@ -22,15 +22,15 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "#general")
 
-# Strategy Constants
-RSI_WINDOW = int(os.getenv("RSI_WINDOW", 3))
-SMA_WINDOW = int(os.getenv("SMA_WINDOW", 100))
-MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", 5))
-RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", 35))
-RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", 70))
+# Strategy Constants (Updated: 2026-01-21, Next Open + True Survivorship Optimized)
+RSI_WINDOW = int(os.getenv("RSI_WINDOW", 4))
+SMA_WINDOW = int(os.getenv("SMA_WINDOW", 30))
+MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", 3))
+RSI_BUY_THRESHOLD = float(os.getenv("RSI_BUY_THRESHOLD", 22))
+RSI_SELL_THRESHOLD = float(os.getenv("RSI_SELL_THRESHOLD", 80))
 
-MAX_HOLDING_DAYS = int(os.getenv("MAX_HOLDING_DAYS", 38))
-LOSS_COOLDOWN_DAYS = int(os.getenv("LOSS_COOLDOWN_DAYS", 40))
+MAX_HOLDING_DAYS = int(os.getenv("MAX_HOLDING_DAYS", 20))
+LOSS_COOLDOWN_DAYS = int(os.getenv("LOSS_COOLDOWN_DAYS", 90))
 
 # Trading Config
 # ALLOCATION_PCT = float(os.getenv("ALLOCATION_PCT", 0.20)) # Deprecated
