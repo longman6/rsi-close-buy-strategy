@@ -111,12 +111,14 @@ class KISClient:
 
     def _send_request(self, method, path, tr_id, params=None, body=None):
         """
-        Refactored Request Handler with Auto Token Refresh
-        Retries once if token expired (EGW00123)
+        Refactored Request Handler with Auto Token Refresh and Rate Limit Handling
         """
         url = f"{self.base_url}{path}"
         
-        for attempt in range(2):
+        # Max retries for rate limits or server errors
+        max_retries = 5
+        
+        for attempt in range(max_retries):
             headers = self._get_headers(tr_id)
             res = None
             try:
@@ -125,39 +127,45 @@ class KISClient:
                 else:
                     res = requests.post(url, headers=headers, data=json.dumps(body) if body else None, timeout=10)
                 
-                # Check for Token Expiry
+                # Check JSON for specific error codes
                 is_expired = False
+                is_ratelimit = False
+                msg = ""
                 try:
                     data = res.json()
-                    # Check msg_cd for EGW00123 (Token Expired)
-                    if data.get('msg_cd') == 'EGW00123':
+                    msg_cd = data.get('msg_cd', '')
+                    msg = data.get('msg1', '')
+                    if msg_cd == 'EGW00123':
                         is_expired = True
+                    elif msg_cd == 'EGW00201' or "초과" in msg:
+                        is_ratelimit = True
                 except:
-                    # JSON parse error means probably not a standard API error response
                     pass
                 
+                # 1. Handle Token Expiry
                 if is_expired:
-                    if attempt == 0:
-                        logging.warning("[KIS] Token Expired (EGW00123). Refreshing and retrying...")
-                        # Force Refresh
-                        self.access_token = None
-                        if os.path.exists('token.json'):
-                            os.remove('token.json')
-                        self.get_access_token() # Will fetch new and save
-                        continue # Retry loop
-                    else:
-                        logging.error("[KIS] Token Refresh Failed or Rejected twice.")
-                        return res
+                    logging.warning("[KIS] Token Expired (EGW00123). Refreshing and retrying...")
+                    self.access_token = None
+                    if os.path.exists('token.json'):
+                        os.remove('token.json')
+                    self.get_access_token()
+                    continue
+                
+                # 2. Handle Rate Limit
+                if is_ratelimit or res.status_code == 500:
+                    wait_time = 1.0 if self.is_mock else 0.5
+                    logging.warning(f"[KIS] Rate Limit or Server Error ({res.status_code}). Waiting {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
                 
                 return res
             
             except Exception as e:
                 logging.error(f"[KIS] Request Exception: {e}")
-                if attempt == 0: 
-                    time.sleep(1)
-                    continue 
-                return None
-        return None
+                time.sleep(1)
+                continue
+                
+        return res
 
     def get_access_token(self):
         """Get or refresh OAuth access token."""

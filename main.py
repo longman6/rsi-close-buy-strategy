@@ -14,6 +14,8 @@ from src.db_manager import DBManager
             # 0. 07:00 Gemini Buy Advice (Removed - Replaced by Cron analyze_kosdaq150.py)
             # if current_time == "07:00": ...
 from scripts import parse_trade_log
+import ast
+
 
 # Setup Logging
 def kst_converter(*args):
@@ -109,6 +111,38 @@ def reset_daily_state(kis):
         else:
             state["is_holiday"] = False
             logging.info(f"📈 Today ({today}) is a Trading Day.")
+
+def get_kosdaq150_universe():
+    """Fetch KOSDAQ 150 tickers. Prioritizes local file."""
+    fallback_file = "data/kosdaq150_list.txt"
+    if os.path.exists(fallback_file):
+        universe = []
+        try:
+            with open(fallback_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.endswith(','): line = line[:-1]
+                    if not line: continue
+                    try:
+                        item = ast.literal_eval(line)
+                        universe.append(item)
+                    except: pass
+            if universe: return universe
+        except Exception as e:
+            logging.error(f"File Load Error: {e}")
+
+    try:
+        from pykrx import stock
+        tickers = stock.get_index_portfolio_deposit_file("2203") # KOSDAQ 150
+        universe = []
+        for ticker in tickers:
+            name = stock.get_market_ticker_name(ticker)
+            universe.append({'code': ticker, 'name': name})
+        return universe
+    except Exception as e:
+        logging.error(f"PyKRX Universe Fetch Error: {e}")
+        return []
+
 
 def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, force=False):
     """주기적으로 현재 잔고 및 포지션 상태를 출력 (매시 10분 또는 force=True)"""
@@ -244,115 +278,8 @@ def main():
             
         except KeyboardInterrupt:
             logging.info("🛑 Bot Stopped by User.")
-            break
-        except Exception as e:
             logging.error(f"⚠️ Main Loop Error: {e}")
             time.sleep(5)
-
-def run_morning_analysis(kis, telegram, strategy, trade_manager):
-    """08:30: Calculate RSI, Select Candidates using DB Consensus"""
-    logging.info("🔍 [08:30] Starting Morning Analysis...")
-    telegram.send_message("🔍 [08:30] Morning Analysis Started")
-
-    balance = kis.get_balance()
-    if not balance:
-        logging.error("Failed to fetch balance.")
-        return
-
-    # Check Holdings Count
-    current_holdings = [h for h in balance['holdings'] if int(h['hldg_qty']) > 0]
-    slots_open = config.MAX_POSITIONS - len(current_holdings)
-    
-    if slots_open <= 0:
-        logging.info("Portfolio Full. No new buys.")
-        telegram.send_message("ℹ️ Portfolio Full. No new buys.")
-        return
-
-    # NEW LOGIC: Query DB
-    db = DBManager()
-    today_str = get_now_kst().strftime("%Y-%m-%d")
-    
-    # 1. Get Low RSI Candidates
-    rsi_threshold = config.RSI_BUY_THRESHOLD 
-    
-    low_rsi_candidates = db.get_low_rsi_candidates(today_str, threshold=rsi_threshold, min_sma_check=True)
-    logging.info(f"Found {len(low_rsi_candidates)} candidates with RSI < {rsi_threshold}")
-    
-    if not low_rsi_candidates:
-        msg = f"ℹ️ No stocks with RSI < {rsi_threshold} found for {today_str}."
-        logging.info(msg)
-        telegram.send_message(msg)
-        # We stop here because intersection will be empty anyway
-        return
-
-    # 2. Get Consensus Candidates
-    # Change: User requested "Purchase unless ALL LLMs say NO". 
-    # This implies selecting if at least 1 LLM says YES.
-    consensus_codes = db.get_consensus_candidates(today_str, min_votes=1)
-    logging.info(f"Found {len(consensus_codes)} candidates with at least 1-LLM Approval")
-    
-    if not consensus_codes:
-        msg = "ℹ️ No stocks with 4-LLM Consensus found."
-        logging.info(msg)
-        telegram.send_message(msg)
-        return
-
-    candidates = []
-    
-    # Intersect and Filter
-    for item in low_rsi_candidates:
-        code = item['code']
-        name = item['name']
-        
-        # Check Exclusion
-        if code in state["exclude_list"]:
-            continue
-            
-        # Check Consensus
-        if code not in consensus_codes:
-            continue
-            
-        # Check Holdings
-        if any(h['pdno'] == code for h in current_holdings): continue
-        
-        # Check Loss Cooldown
-        if not trade_manager.can_buy(code):
-            continue
-            
-        # Check Dangerous Status (API Check)
-        is_dangerous, reason = kis.check_dangerous_stock(code)
-        if is_dangerous:
-             logging.info(f"🚫 Skipping {code}: {reason}")
-             continue
-        
-        # If passed all checks
-        candidates.append(item)
-        logging.info(f"Candidate: {name} ({code}) RSI={item['rsi']:.2f}")
-
-    # Sort by RSI (ascending)
-    candidates.sort(key=lambda x: x['rsi'])
-    final_buys = candidates[:slots_open]
-    
-    # Save to State
-    for item in final_buys:
-        state["buy_targets"].append({
-            "code": item['code'],
-            "name": item['name'],
-            "rsi": item['rsi'],
-            "close_yesterday": float(item['close_price']), # DB column name
-            "target_qty": 0 # Calculated later
-        })
-    
-    msg = f"✅ Analysis Done. Selected {len(final_buys)} candidates (RSI &lt; {rsi_threshold} + 4-LLM Consensus)."
-    
-    if final_buys:
-        msg += "\n\n📋 <b>Selected Candidates:</b>"
-        for item in final_buys:
-             # item keys: code, name, rsi, close_price
-             msg += f"\n• {item['name']} ({item['code']}) | RSI: {item['rsi']:.2f} | Close: {item['close_price']:,.0f}"
-
-    logging.info(msg)
-    telegram.send_message(msg)
 
 def run_morning_sell_analysis(kis, telegram, strategy, trade_manager):
     """08:30: 전일 종가 기준 매도 조건 체크"""
@@ -415,8 +342,8 @@ def run_morning_sell_execution(kis, telegram, trade_manager):
         time.sleep(0.2)
 
 def run_evening_buy_analysis(kis, telegram, strategy, trade_manager, db_manager):
-    """15:10: 장 마감 전 현재가 기준 매수 조건 체크"""
-    logging.info("🔍 [15:10] Evening Buy Analysis Starting...")
+    """15:10: 코스닥 150 전 종목 스캔 및 매수 조건 체크 (실시간 RSI/SMA)"""
+    logging.info("🔍 [15:10] Evening Full Market Scan Starting...")
     
     balance = kis.get_balance()
     if not balance: return
@@ -425,40 +352,65 @@ def run_evening_buy_analysis(kis, telegram, strategy, trade_manager, db_manager)
     slots_open = config.MAX_POSITIONS - num_holdings
     
     if slots_open <= 0:
-        logging.info("Portfolio Full.")
+        logging.info("Portfolio Full. Skipping Scan.")
         return
 
-    today_str = get_now_kst().strftime("%Y-%m-%d")
-    potential_candidates = db_manager.get_low_rsi_candidates(today_str, threshold=config.RSI_BUY_THRESHOLD + 2, min_sma_check=True)
-    consensus_codes = db_manager.get_consensus_candidates(today_str, min_votes=1)
-    
+    universe = get_kosdaq150_universe()
+    if not universe:
+        logging.error("Failed to load KOSDAQ 150 universe.")
+        return
+
     final_candidates = []
-    for item in potential_candidates:
+    total = len(universe)
+    
+    logging.info(f"Scanning {total} stocks for Buy Signal...")
+    for i, item in enumerate(universe):
         code = item['code']
-        if code in state["exclude_list"] or code not in consensus_codes: continue
+        name = item['name']
+        
+        # 1. Basic Filters
+        if code in state["exclude_list"]: continue
         if any(h['pdno'] == code for h in balance['holdings'] if int(h['hldg_qty']) > 0): continue
         if not trade_manager.can_buy(code): continue
         
-        # 현재가로 실시간 확증
-        time.sleep(0.1)
-        curr_info = kis.get_current_price(code)
-        if not curr_info: continue
-        curr_p = float(curr_info['stck_prpr'])
-        
+        # 2. Fetch OHLCV & Indicators
+        # OHLCV fetching includes rate limit delay internally
         df = kis.get_daily_ohlcv(code)
         if df.empty: continue
-        df['Close'].iloc[-1] = curr_p # 오늘 장중가 반영
+        
+        # 실시간 현재가 반영 (장 마감 전이므로 마지막 봉 업데이트)
+        curr_info = kis.get_current_price(code)
+        if curr_info:
+            curr_p = float(curr_info['stck_prpr'])
+            df.loc[df.index[-1], 'Close'] = curr_p
+            
         df = strategy.calculate_indicators(df)
+        if len(df) < strategy.sma_window: continue
         
         latest = df.iloc[-1]
-        if latest['RSI'] <= config.RSI_BUY_THRESHOLD and latest['Close'] > latest['SMA']:
-             final_candidates.append({"code": code, "name": item['name'], "rsi": latest['RSI'], "cp": curr_p})
-             logging.info(f"🎯 Buy Candidate: {item['name']} (RSI: {latest['RSI']:.1f})")
+        rsi = latest['RSI']
+        sma = latest['SMA']
+        close = latest['Close']
+        
+        # 3. Strategy Conditions (RSI <= threshold AND Close > SMA)
+        if not pd.isna(rsi) and not pd.isna(sma):
+            if rsi <= config.RSI_BUY_THRESHOLD and close > sma:
+                # 4. Dangerous stock check (Final filter)
+                is_dangerous, reason = kis.check_dangerous_stock(code)
+                if not is_dangerous:
+                    final_candidates.append({"code": code, "name": name, "rsi": rsi})
+                    logging.info(f"🎯 Found: {name} ({code}) RSI: {rsi:.1f}, Close: {close:,.0f} > SMA: {sma:,.0f}")
+                else:
+                    logging.info(f"🚫 Skipping {name} ({code}): {reason}")
 
+        if (i+1) % 10 == 0:
+            logging.info(f"Progress: {i+1}/{total}...")
+
+    # Sort by RSI (ascending)
     final_candidates.sort(key=lambda x: x['rsi'])
     state["buy_targets"] = final_candidates[:slots_open]
     
-    msg = f"✅ Buy Analysis Done. Targets: {len(state['buy_targets'])} stocks."
+    msg = f"✅ Market Scan Done. Found {len(final_candidates)} signals. Targets: {len(state['buy_targets'])}."
     if state["buy_targets"]:
         msg += "\n📋 Targets: " + ", ".join([f"{t['name']}({t['rsi']:.1f})" for t in state["buy_targets"]])
     logging.info(msg)
