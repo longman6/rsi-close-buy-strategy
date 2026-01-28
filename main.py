@@ -110,6 +110,56 @@ def reset_daily_state(kis):
             state["is_holiday"] = False
             logging.info(f"📈 Today ({today}) is a Trading Day.")
 
+def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, force=False):
+    """주기적으로 현재 잔고 및 포지션 상태를 출력 (매시 10분 또는 force=True)"""
+    now = get_now_kst()
+    if not force and now.minute != 10:
+        return
+
+    # 중복 전송 방지 (같은 시간에 한 번만)
+    current_hour_str = now.strftime("%Y-%m-%d %H")
+    if not force and state.get('last_sent_hour') == current_hour_str:
+        return
+        
+    logging.info("📊 Fetching Holdings Status...")
+    balance = kis.get_balance()
+    if not balance:
+        logging.error("Failed to fetch balance for status display.")
+        return
+
+    holdings = balance.get('holdings', [])
+    total_asset = float(balance.get('total_amt', 0))
+    cash_balance = float(balance.get('dnca_tot_amt', 0)) # 예수금총액 or prvs_rcdl_excg_amt(가수도)
+    
+    # KIS API 필드명에 따라 다를 수 있음. 안전하게 처리
+    real_total = float(balance.get('tot_evlu_amt', 0)) # 총평가금액
+    if real_total == 0: real_total = total_asset
+
+    msg = f"💰 [Status] Total: {real_total:,.0f} KRW | Cash: {cash_balance:,.0f} KRW\n📦 Holdings: {len(holdings)} stocks"
+    
+    for h in holdings:
+        name = h['prdt_name']
+        code = h['pdno']
+        qty = int(h['hldg_qty'])
+        profit_rate = float(h['evlu_pfls_rt'])
+        current_price = float(h['prpr'])
+        
+        entry = trade_manager.get_trade(code)
+        days_held = "?"
+        if entry:
+             from datetime import datetime
+             buy_date = datetime.strptime(entry['buy_date'], "%Y%m%d")
+             days_held = (now - pytz.timezone('Asia/Seoul').localize(buy_date)).days
+
+        msg += f"\n• {name}: {qty}주 | {profit_rate:+.2f}% | D+{days_held}"
+
+    logging.info(msg)
+    telegram.send_message(msg)
+    
+    if not force:
+        state['last_sent_hour'] = current_hour_str
+
+
 def main():
     logging.info("🚀 Continuous RSI Power Zone Bot Started")
     
@@ -141,7 +191,7 @@ def main():
     # Log Startup Time in KST
     startup_kst = get_now_kst().strftime("%Y-%m-%d %H:%M:%S")
     logging.info(f"⏰ KST Clock Check: {startup_kst}")
-    logging.info(f"📅 Daily State: Analysis={state['analysis_done']}, PreOrder={state['pre_order_done']}")
+    logging.info(f"📅 Daily State: Sell(Anal={state['sell_analysis_done']}, Exec={state['sell_exec_done']}) | Buy(Anal={state['buy_analysis_done']}, Exec={state['buy_exec_done']})")
 
             # Initial Status Display (Run once on startup)
     logging.info("📊 Checking Initial Holdings...")

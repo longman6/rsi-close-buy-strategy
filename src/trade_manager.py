@@ -67,6 +67,11 @@ class TradeManager:
             # Simplified: just save pct for now as passed.
             self.db.save_trade_record(db_date, code, name, "SELL", float(price), int(qty), pnl_pct=float(pnl_pct))
 
+    def get_trade(self, code):
+        """Retrieve trade info for a specific code from holdings."""
+        return self.history["holdings"].get(code)
+
+
     def get_holding_days(self, code, current_date_str=None, df=None):
         """
         보유 일수 계산.
