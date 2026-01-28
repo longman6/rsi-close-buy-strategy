@@ -678,22 +678,7 @@ class KISClient:
 
         return False, "Safe"
 
-    def get_outstanding_orders(self):
-        """
-        Fetch unfilled (outstanding) orders.
-        TR_ID: TTTC8055R (Real) / VTTC8055R (Mock)
-        """
-        path = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld"
-        
-        tr_id = "VTTC8055R" if self.is_mock else "TTTC8055R"
-        
-        # Note: API might be slightly different for 'Unfilled'.
-        # Common endpoint for unfilled is 'inquire-psbl-order' or similar, 
-        # but 'inquire-daily-ccld' with 'CCLD_DVSN'="02" (Unfilled) is standard for history.
-        
-        # Let's use 'inquire-daily-ccld' (Daily Conclusion/Unfilled)
-        
-        
+
     def get_outstanding_orders(self):
         """
         Fetch unfilled (outstanding) orders.

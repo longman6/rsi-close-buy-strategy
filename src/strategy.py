@@ -128,11 +128,10 @@ class Strategy:
         latest = df.iloc[-1]
         
         # Conditions:
-        # 1. Close > SMA(100) (User said "Broad market up? No, code said Close > SMA200", 
-        #    Plan: RSI(3), SMA(100).
-        #    Backtest code checks: row['Close'] > row['SMA200']
-        #    User Request: RSI(3), SMA(100).
-        #    So we check: Close > SMA(100).
+        # 1. Close > SMA
+        #    User Request: RSI(3) or RSI(5), SMA(Moving Average).
+        #    So we check: Close > SMA(config.SMA_WINDOW).
+        #    So we check: Close > SMA(config.SMA_WINDOW).
         
         if pd.isna(latest['SMA']) or pd.isna(latest['RSI']):
             return None
