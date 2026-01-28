@@ -37,17 +37,16 @@ class Strategy:
         df must have 'Close' column.
         Returns df with 'RSI' and 'SMA' columns.
         """
-        # SMA (데이터 부족 시 상장일 전체 기간으로 계산, min_periods=20)
-        df['SMA'] = df['Close'].rolling(window=self.sma_window, min_periods=20).mean()
+        # SMA 
+        df['SMA'] = df['Close'].rolling(window=self.sma_window).mean()
         
-        # RSI
+        # RSI (Simple Moving Average version - matches our successful backtest)
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).fillna(0)
         loss = (-delta.where(delta < 0, 0)).fillna(0)
         
-        # Use Wilder's Smoothing (Standard RSI)
-        avg_gain = gain.ewm(com=self.rsi_window - 1, min_periods=self.rsi_window, adjust=False).mean()
-        avg_loss = loss.ewm(com=self.rsi_window - 1, min_periods=self.rsi_window, adjust=False).mean()
+        avg_gain = gain.rolling(window=self.rsi_window).mean()
+        avg_loss = loss.rolling(window=self.rsi_window).mean()
         
         rs = avg_gain / avg_loss
         df['RSI'] = 100 - (100 / (1 + rs))

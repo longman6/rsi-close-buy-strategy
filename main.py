@@ -32,19 +32,17 @@ logging.basicConfig(
 
 # Global State Variables (Reset daily)
 state = {
-    "analysis_done": False,
-    "pre_order_done": False,
-    "second_order_done": False,  # 2차 주문 완료 플래그
-    "buy_verified": False,
-    "sell_check_done": False,
+    "sell_analysis_done": False,
     "sell_exec_done": False,
-    "trade_sync_done": False,  # 거래 기록 동기화 완료 플래그
-    "buy_targets": [], # List of dict: {code, rsi, close_yesterday, target_qty}
+    "buy_analysis_done": False,
+    "buy_exec_done": False,
+    "trade_sync_done": False,
+    "buy_targets": [], # List of dict: {code, rsi, close_price, name}
+    "sell_targets": [], # List of dict: {code, name, reason}
     "last_reset_date": None,
     "is_holiday": False,
     "exclude_list": set(),
-    "gemini_advice_done": False,
-    "last_sent_hour": -1 # Track hourly notifications
+    "last_sent_hour": -1 
 }
 
 def load_exclusion_list(kis=None):
@@ -91,17 +89,15 @@ from src.utils import get_now_kst
 def reset_daily_state(kis):
     today = get_now_kst().strftime("%Y-%m-%d")
     if state["last_reset_date"] != today:
-        logging.info("🔄 Resetting Daily State...")
-        state["analysis_done"] = False
-        state["pre_order_done"] = False
-        state["second_order_done"] = False
-        state["buy_verified"] = False
-        state["sell_check_done"] = False
+        logging.info("🔄 Resetting Daily State (RSI 5 Close-Buy Mode)...")
+        state["sell_analysis_done"] = False
         state["sell_exec_done"] = False
+        state["buy_analysis_done"] = False
+        state["buy_exec_done"] = False
         state["trade_sync_done"] = False
         state["buy_targets"] = []
+        state["sell_targets"] = []
         state["exclude_list"] = load_exclusion_list(kis)
-        state["gemini_advice_done"] = False
         state["last_reset_date"] = today
         state["last_sent_hour"] = -1
         
@@ -161,70 +157,38 @@ def main():
             current_time = now.strftime("%H:%M")
             reset_daily_state(kis)
 
-            # Holiday Skip - Removed to allow Holdings Display
-            # if state["is_holiday"]: ...
-
-            # 1. 08:30 Analysis & Buy Candidate Selection
-            # Window: 08:30 ~ 08:50
             if not state["is_holiday"]:
-                if current_time >= config.TIME_MORNING_ANALYSIS and current_time <= config.TIME_MORNING_ANALYSIS_END:
-                    if not state["analysis_done"]:
-                        run_morning_analysis(kis, telegram, strategy, trade_manager)
-                        state["analysis_done"] = True
-                elif current_time > config.TIME_MORNING_ANALYSIS_END and not state["analysis_done"]:
-                    # If started late (after 08:50), skip analysis
-                    logging.info(f"⏭️ [Skip] Morning Analysis window passed ({current_time}).")
-                    state["analysis_done"] = True
+                # 1. 08:30 Morning Sell Analysis (Yesterday's signals)
+                if current_time >= config.TIME_MORNING_ANALYSIS and current_time < config.TIME_PRE_ORDER:
+                    if not state["sell_analysis_done"]:
+                        run_morning_sell_analysis(kis, telegram, strategy, trade_manager)
+                        state["sell_analysis_done"] = True
 
-            # 2. 08:57 Pre-Market Order (1차 주문)
-            # Window: 08:57 ~ 09:10
-            if not state["is_holiday"]:
-                if current_time >= config.TIME_PRE_ORDER and current_time <= config.TIME_PRE_ORDER_END:
-                    if not state["pre_order_done"]:
-                        run_pre_order(kis, telegram, trade_manager)
-                        state["pre_order_done"] = True
-                elif current_time > config.TIME_PRE_ORDER_END and not state["pre_order_done"]:
-                    # If started late, skip pre-order
-                    logging.info(f"⏭️ [Skip] Pre-Order window passed ({current_time}).")
-                    state["pre_order_done"] = True
+                # 2. 08:50 Morning Sell Execution (Market Sell at Open)
+                if current_time >= config.TIME_PRE_ORDER and current_time < config.TIME_ORDER_CHECK:
+                    if not state["sell_exec_done"]:
+                        run_morning_sell_execution(kis, telegram, trade_manager)
+                        state["sell_exec_done"] = True
 
-            # 2.5. 09:30 Second Order (2차 주문)
-            if not state["is_holiday"]:
-                if current_time >= config.SECOND_ORDER_TIME and not state["second_order_done"]:
-                    if state["pre_order_done"]:  # Only if first order was placed
-                        run_second_order(kis, telegram, trade_manager)
-                        state["second_order_done"] = True
-                    else:
-                        logging.warning("⚠️  Skipping second order: First order not completed")
-                        state["second_order_done"] = True  # Mark as done to prevent retrying
+                # 3. 15:10 Evening Buy Analysis (Analyze for Close Buy)
+                if current_time >= config.TIME_SELL_CHECK and current_time < config.TIME_SELL_EXEC:
+                    if not state["buy_analysis_done"]:
+                        run_evening_buy_analysis(kis, telegram, strategy, trade_manager, db_manager)
+                        state["buy_analysis_done"] = True
 
-            # 3. 09:05 ~ Order Verification & Correction Loop
-            # This runs repeatedly every minute starting from 09:05 until ... say 15:00?
-            if not state["is_holiday"]:
-                if current_time >= config.TIME_ORDER_CHECK and current_time < config.TIME_SELL_CHECK:
-                     monitor_and_correct_orders(kis, telegram, trade_manager)
+                # 4. 15:20 Evening Buy Execution (Execute Market/Best Buy for Close)
+                if current_time >= config.TIME_SELL_EXEC and current_time < config.TIME_TRADE_SYNC:
+                    if not state["buy_exec_done"]:
+                        run_evening_buy_execution(kis, telegram, trade_manager)
+                        state["buy_exec_done"] = True
 
-            # Periodic Display of Holdings (Scheduled Hourly at XX:10)
-            # Periodic Display of Holdings (Scheduled Hourly at XX:10)
-            display_holdings_status(kis, telegram, strategy, trade_manager, db_manager)
-
-            # 4. 15:20 Sell Signal Check
-            if not state["is_holiday"]:
-                if current_time >= config.TIME_SELL_CHECK and not state["sell_check_done"]:
-                    run_sell_check(kis, telegram, strategy, trade_manager)
-                    state["sell_check_done"] = True
-
-            # 5. 15:26 Sell Execution (Market/Best)
-            if not state["is_holiday"]:
-                if current_time >= config.TIME_SELL_EXEC and not state["sell_exec_done"]:
-                    run_sell_execution(kis, telegram, strategy, trade_manager)
-                    state["sell_exec_done"] = True
-
-            # 6. 15:40 거래 기록 동기화 (장 마감 후 체결 내역 일괄 저장)
-            if not state["is_holiday"]:
+                # 5. 15:40 Sync Trades
                 if current_time >= config.TIME_TRADE_SYNC and not state["trade_sync_done"]:
                     sync_trades_at_close(kis, telegram, trade_manager)
                     state["trade_sync_done"] = True
+            
+            # Periodic Holdings Display (XX:10)
+            display_holdings_status(kis, telegram, strategy, trade_manager, db_manager)
             
             time.sleep(1)
             
@@ -340,640 +304,166 @@ def run_morning_analysis(kis, telegram, strategy, trade_manager):
     logging.info(msg)
     telegram.send_message(msg)
 
-def run_pre_order(kis, telegram, trade_manager):
-    """08:57: Place First Stage Orders with lower premium (+0.3%)"""
-    first_order_ratio = config.FIRST_ORDER_RATIO
-    first_order_premium = config.FIRST_ORDER_PREMIUM
-    logging.info(f"⏰ [08:57] 1차 주문 ({int(first_order_ratio*100)}%, +{first_order_premium*100:.1f}% 프리미엄)...")
-    telegram.send_message(f"⏰ [08:57] 1차 주문 시작 (전체의 {int(first_order_ratio*100)}%, 낮은 가격 전략)")
+def run_morning_sell_analysis(kis, telegram, strategy, trade_manager):
+    """08:30: 전일 종가 기준 매도 조건 체크"""
+    logging.info("🔍 [08:30] Morning Sell Analysis Starting...")
+    
+    balance = kis.get_balance()
+    if not balance: return
 
-    if not state["buy_targets"]:
-        logging.info("No targets to buy.")
+    for h in balance['holdings']:
+        qty = int(h['hldg_qty'])
+        if qty <= 0: continue
+        
+        code = h['pdno']
+        name = h['prdt_name']
+        
+        if code in state["exclude_list"]: continue
+
+        # 전일 종가 데이터 확인
+        df = kis.get_daily_ohlcv(code)
+        if df.empty: continue
+            
+        df = strategy.calculate_indicators(df)
+        
+        # 신호 체크
+        forced_sell = trade_manager.check_forced_sell(code, df=df)
+        sell_signal = strategy.check_sell_signal(code, df)
+        
+        if sell_signal or forced_sell:
+            reason = "RSI_EXIT" if sell_signal else "TIME_EXIT"
+            state["sell_targets"].append({"code": code, "name": name, "reason": reason, "qty": qty})
+            logging.info(f"🔻 Sell identified: {name} ({code}) - {reason}")
+
+    msg = f"✅ Sell Analysis Done. Targets: {len(state['sell_targets'])} stocks."
+    if state["sell_targets"]:
+        msg += "\n📋 Targets: " + ", ".join([f"{t['name']}({t['reason']})" for t in state["sell_targets"]])
+    logging.info(msg)
+    telegram.send_message(msg)
+
+def run_morning_sell_execution(kis, telegram, trade_manager):
+    """08:50: 매도 타겟 시장가(시가) 매도 주문"""
+    if not state["sell_targets"]:
+        logging.info("No targets to sell this morning.")
         return
+
+    logging.info(f"💸 [08:50] Executing Market Sells for {len(state['sell_targets'])} targets...")
+    
+    for target in state["sell_targets"]:
+        code = target['code']
+        name = target['name']
+        qty = target['qty']
+        
+        success, msg = kis.send_order(code, qty, side="sell", price=0, order_type="01")
+        if success:
+            logging.info(f"👋 Sell Order: {name} ({qty}주)")
+            telegram.send_message(f"👋 Sell Order: {name}\nQty: {qty}")
+            trade_manager.update_sell(code, name, get_now_kst().strftime("%Y%m%d"), 0, qty, 0)
+        else:
+            logging.error(f"❌ Sell Failed {name}: {msg}")
+            telegram.send_message(f"❌ Sell Failed: {name}\nMsg: {msg}")
+        time.sleep(0.2)
+
+def run_evening_buy_analysis(kis, telegram, strategy, trade_manager, db_manager):
+    """15:10: 장 마감 전 현재가 기준 매수 조건 체크"""
+    logging.info("🔍 [15:10] Evening Buy Analysis Starting...")
+    
+    balance = kis.get_balance()
+    if not balance: return
+    
+    num_holdings = len([h for h in balance['holdings'] if int(h['hldg_qty']) > 0])
+    slots_open = config.MAX_POSITIONS - num_holdings
+    
+    if slots_open <= 0:
+        logging.info("Portfolio Full.")
+        return
+
+    today_str = get_now_kst().strftime("%Y-%m-%d")
+    potential_candidates = db_manager.get_low_rsi_candidates(today_str, threshold=config.RSI_BUY_THRESHOLD + 2, min_sma_check=True)
+    consensus_codes = db_manager.get_consensus_candidates(today_str, min_votes=1)
+    
+    final_candidates = []
+    for item in potential_candidates:
+        code = item['code']
+        if code in state["exclude_list"] or code not in consensus_codes: continue
+        if any(h['pdno'] == code for h in balance['holdings'] if int(h['hldg_qty']) > 0): continue
+        if not trade_manager.can_buy(code): continue
+        
+        # 현재가로 실시간 확증
+        time.sleep(0.1)
+        curr_info = kis.get_current_price(code)
+        if not curr_info: continue
+        curr_p = float(curr_info['stck_prpr'])
+        
+        df = kis.get_daily_ohlcv(code)
+        if df.empty: continue
+        df['Close'].iloc[-1] = curr_p # 오늘 장중가 반영
+        df = strategy.calculate_indicators(df)
+        
+        latest = df.iloc[-1]
+        if latest['RSI'] <= config.RSI_BUY_THRESHOLD and latest['Close'] > latest['SMA']:
+             final_candidates.append({"code": code, "name": item['name'], "rsi": latest['RSI'], "cp": curr_p})
+             logging.info(f"🎯 Buy Candidate: {item['name']} (RSI: {latest['RSI']:.1f})")
+
+    final_candidates.sort(key=lambda x: x['rsi'])
+    state["buy_targets"] = final_candidates[:slots_open]
+    
+    msg = f"✅ Buy Analysis Done. Targets: {len(state['buy_targets'])} stocks."
+    if state["buy_targets"]:
+        msg += "\n📋 Targets: " + ", ".join([f"{t['name']}({t['rsi']:.1f})" for t in state["buy_targets"]])
+    logging.info(msg)
+    telegram.send_message(msg)
+
+def run_evening_buy_execution(kis, telegram, trade_manager):
+    """15:20: 종가 매수 주문 집행"""
+    if not state["buy_targets"]: return
 
     balance = kis.get_balance()
     cash = float(balance.get('max_buy_amt', 0))
-    count = len(state["buy_targets"])
-    if count == 0: return
-
-    # Use Fixed Amount from Config
-    amt_per_stock_config = config.BUY_AMOUNT_KRW
-    amt_per_stock_first = int(amt_per_stock_config * first_order_ratio)
-
-    current_cash = cash
-
-    # Check if we have enough cash (Warning)
-    total_needed = amt_per_stock_first * count
-    if total_needed > current_cash:
-        msg = f"⚠️ 1차 주문 예수금 부족 예측! 필요: {total_needed:,.0f}원, 보유: {current_cash:,.0f}원. 주문 금액을 자동으로 조정합니다."
-        logging.warning(msg)
-        telegram.send_message(msg) 
-
+    amt_per_stock = config.BUY_AMOUNT_KRW
+    
+    logging.info(f"🛒 [15:20] Executing Close Buys...")
     for target in state["buy_targets"]:
-        code = target['code']
-        if code in state["exclude_list"]:
-            logging.info(f"🚫 Pre-Order Skipped {code} (Excluded)")
-            continue
-
-        # Fetch Expected Price
-        curr = kis.get_current_price(code)
+        if cash < amt_per_stock * 0.5: break
         
-        if curr and int(curr.get('antc_cnpr', 0)) > 0:
-            base_price = float(curr['antc_cnpr'])
-        else:
-            base_price = target['close_yesterday']
-
-        # Apply lower premium (+0.3% instead of +1.5%)
-        limit_price = int(base_price * (1 + first_order_premium))
-        limit_price = kis.get_valid_price(limit_price)
-
-        # Store initial order price and time for gradual price increase monitoring
-        target['initial_order_price'] = limit_price
-        target['initial_order_time'] = time.time()
+        curr = kis.get_current_price(target['code'])
+        if not curr: continue
+        price = float(curr['stck_prpr'])
         
-        # Check Cash for this Order (First Stage Amount)
-        amt_to_use = amt_per_stock_first
-        if current_cash < amt_to_use:
-            amt_to_use = current_cash
-            if amt_to_use < limit_price:
-                telegram.send_message(f"❌ Skipping {code}: 1차 주문 예수금 절대 부족 ({int(amt_to_use):,}원)")
-                continue
-            logging.warning(f"📉 {code}: 예수금 부족으로 1차 주문 금액 조정 ({amt_per_stock_first:,} -> {int(amt_to_use):,}원)")
-
-        qty = int(amt_to_use / limit_price)
+        qty = int(amt_per_stock / price)
         if qty < 1: continue
-
-        # Store first order quantity separately
-        target['first_order_qty'] = qty
-        target['target_qty'] = qty  # Keep for compatibility
-
-        # Place First Order
-        success, msg = kis.send_order(code, qty, side="buy", price=limit_price, order_type="00")
+        
+        success, msg = kis.send_order(target['code'], qty, side="buy", price=0, order_type="01")
         if success:
-            telegram.send_message(
-                f"🛒 1차 주문 완료 (낮은 가격 전략)\n"
-                f"종목: {target['name']} ({code})\n"
-                f"수량: {qty}주\n"
-                f"가격: {limit_price:,}원 (+{first_order_premium*100:.1f}%)\n"
-                f"기준가: {int(base_price):,}원\n"
-                f"금액: {qty*limit_price:,}원"
-            )
-            # Note: 거래 기록은 장 마감 후 15:40에 sync_trades_at_close()에서 일괄 저장
-
-            # Update Local Cash Estimate (Approximate)
-            order_amt = limit_price * qty
-            current_cash -= order_amt
-        else:
-            telegram.send_message(f"❌ 1차 주문 실패 {code}: {msg}")
-            
+            logging.info(f"✅ Buy Order: {target['name']} ({qty}주)")
+            telegram.send_message(f"✅ Buy Order: {target['name']}\nQty: {qty}")
+            cash -= (qty * price)
         time.sleep(0.2)
-
-def run_second_order(kis, telegram, trade_manager):
-    """09:30: Place Second Stage Orders with discount (-0.5%)"""
-    if not state["buy_targets"]:
-        logging.info("⏭️  No buy targets for second order")
-        return
-
-    first_order_ratio = config.FIRST_ORDER_RATIO
-    second_order_ratio = 1.0 - first_order_ratio
-    second_order_discount = config.SECOND_ORDER_DISCOUNT
-
-    logging.info(f"🛒 2차 주문 ({int(second_order_ratio*100)}%, -{second_order_discount*100:.1f}% 할인)...")
-    telegram.send_message(f"⏰ [{config.SECOND_ORDER_TIME}] 2차 주문 시작 (나머지 {int(second_order_ratio*100)}%, 할인 전략)")
-
-    # Get current balance
-    balance = kis.get_balance()
-    if not balance:
-        logging.error("❌ Failed to fetch balance for second order")
-        telegram.send_message("❌ 2차 주문 실패: 잔고 조회 불가")
-        return
-
-    current_cash = float(balance.get('max_buy_amt', 0))
-    logging.info(f"💰 Available Cash: {current_cash:,} KRW")
-
-    amt_per_stock_config = config.BUY_AMOUNT_KRW
-    amt_per_stock_second = int(amt_per_stock_config * second_order_ratio)
-
-    for target in state["buy_targets"]:
-        code = target['code']
-
-        # Check if first order was placed
-        if 'first_order_qty' not in target:
-            logging.warning(f"⚠️  {code}: No first order found, skipping second order")
-            continue
-
-        # --- [수정 1] 1차 주문 체결 현황 확인 ---
-        time.sleep(0.3)  # API 호출 간 딜레이
-        filled_info = kis.get_today_filled_info(code, side="buy")
-        first_order_qty = target.get('first_order_qty', 0)
-        filled_qty = filled_info.get('filled_qty', 0)
-        unfilled_qty = filled_info.get('unfilled_qty', 0)
-        
-        logging.info(f"📊 {code} 1차 주문 현황: 주문 {first_order_qty}주 / 체결 {filled_qty}주 / 미체결 {unfilled_qty}주")
-        
-        # 1차 주문이 50% 미만 체결된 경우, 2차 주문 건너뛰기
-        if first_order_qty > 0 and filled_qty < first_order_qty * 0.5:
-            logging.info(f"⏭️  {code}: 1차 주문 체결률 50% 미만 ({filled_qty}/{first_order_qty}), 2차 주문 스킵")
-            telegram.send_message(
-                f"⏭️ 2차 주문 스킵\n"
-                f"종목: {target['name']} ({code})\n"
-                f"사유: 1차 주문 체결률 부족 ({filled_qty}/{first_order_qty}주)"
-            )
-            continue
-        
-        # --- [수정 3] 1차 주문 체결가로 TradeManager 업데이트 ---
-        if filled_qty > 0 and filled_info.get('avg_price', 0) > 0:
-            avg_fill_price = filled_info['avg_price']
-            # Note: 이미 run_pre_order에서 update_buy 호출했으므로, 
-            # 실제 체결가로 갱신하려면 TradeManager에 update 메서드가 필요
-            # 현재는 로그만 남기고, 향후 개선 가능
-            target['actual_fill_price'] = avg_fill_price
-            target['actual_fill_qty'] = filled_qty
-            logging.info(f"📝 {code} 1차 체결 정보: {filled_qty}주 @ 평균 {avg_fill_price:,.0f}원")
-
-        # Fetch current price
-        curr = kis.get_current_price(code)
-        if not curr:
-            logging.warning(f"⚠️  {code}: Failed to get current price")
-            telegram.send_message(f"⚠️ {code} 2차 주문 실패: 현재가 조회 불가")
-            continue
-
-        current_price = float(curr.get('stck_prpr', 0))
-        if current_price == 0:
-            logging.warning(f"⚠️  {code}: Invalid current price")
-            continue
-
-        # Apply discount (-0.5%)
-        discounted_price = int(current_price * (1 - second_order_discount))
-        limit_price = kis.get_valid_price(discounted_price)
-
-        # Store initial order price and time for gradual price increase monitoring
-        target['second_order_initial_price'] = limit_price
-        target['second_order_time'] = time.time()
-
-        # Check if price has risen too much (>5% from yesterday)
-        yesterday_close = target['close_yesterday']
-        if current_price > yesterday_close * 1.05:
-            pct_change = ((current_price / yesterday_close - 1) * 100)
-            logging.info(f"🚫 Skipping {code} second order: Price rose >5% ({current_price:,} > {yesterday_close*1.05:,.0f})")
-            telegram.send_message(
-                f"🚫 2차 주문 취소\n"
-                f"종목: {target['name']} ({code})\n"
-                f"사유: 급등 (+{pct_change:.1f}%)\n"
-                f"현재가: {int(current_price):,}원"
-            )
-            continue
-
-        # Calculate second order amount
-        amt_to_use = amt_per_stock_second
-        if current_cash < amt_to_use:
-            amt_to_use = current_cash
-            if amt_to_use < limit_price:
-                logging.warning(f"⚠️  {code}: Insufficient cash for second order")
-                telegram.send_message(f"❌ {code} 2차 주문 불가: 예수금 부족 ({int(amt_to_use):,}원)")
-                continue
-            logging.warning(f"📉 {code}: 예수금 부족으로 2차 주문 금액 조정 ({amt_per_stock_second:,} -> {int(amt_to_use):,}원)")
-
-        qty = int(amt_to_use / limit_price)
-        if qty < 1:
-            logging.warning(f"⚠️  {code}: Second order qty < 1")
-            continue
-
-        # Place second order
-        time.sleep(0.2)
-        success, msg = kis.send_order(code, qty, side="buy", price=limit_price, order_type="00")
-
-        if success:
-            target['second_order_qty'] = qty
-            target['target_qty'] = target.get('first_order_qty', 0) + qty  # Update total
-
-            telegram.send_message(
-                f"🛒 2차 주문 완료 (할인 전략)\n"
-                f"종목: {target['name']} ({code})\n"
-                f"수량: {qty}주\n"
-                f"가격: {limit_price:,}원 (현재가 대비 -{second_order_discount*100:.1f}%)\n"
-                f"현재가: {int(current_price):,}원\n"
-                f"1차 체결: {filled_qty}주 @ {filled_info.get('avg_price', 0):,.0f}원\n"
-                f"총 주문: {target['target_qty']}주 (1차 {target.get('first_order_qty', 0)} + 2차 {qty})"
-            )
-
-            # Note: 거래 기록은 장 마감 후 15:40에 sync_trades_at_close()에서 일괄 저장
-
-            current_cash -= (qty * limit_price)
-            logging.info(f"✅ Second Order: {code} {qty}ea @ {limit_price:,} | Cash Left: {current_cash:,}")
-        else:
-            logging.error(f"❌ Second Order Failed: {code} - {msg}")
-            telegram.send_message(f"❌ 2차 주문 실패: {code}\n사유: {msg}")
-
-    state["second_order_done"] = True
-    logging.info("✅ 2차 주문 완료")
-    telegram.send_message("✅ 2차 주문 완료")
-
-last_monitor_time = 0
-last_display_time = 0
-
-def monitor_and_correct_orders(kis, telegram, trade_manager):
-    """
-    Monitor and gradually increase unfilled order prices.
-    Runs every 60 seconds.
-    """
-    global last_monitor_time
-    now = time.time()
-
-    if now - last_monitor_time < 60:
-        return  # Run every 1 min
-
-    last_monitor_time = now
-
-    orders = kis.get_outstanding_orders()
-    if not orders:
-        # logging.info("No outstanding orders to monitor.")
-        return
-
-    logging.info(f"🔍 Monitoring {len(orders)} outstanding orders...")
-
-    # Load price strategy settings
-    increment_step = config.PRICE_INCREMENT_STEP  # +0.2%
-    increment_interval = config.PRICE_INCREMENT_INTERVAL  # 300 seconds (5 min)
-    max_increase = config.MAX_PRICE_INCREASE  # +2%
-
-    for ord in orders:
-        code = ord['pdno']
-        order_price = float(ord['ord_unpr'])
-        
-        # Check current price first to get yesterday's close
-        curr = kis.get_current_price(code)
-        if not curr:
-            logging.warning(f"⚠️ [Monitor] Failed to get price for {code}")
-            continue
-
-        current_price = float(curr.get('stck_prpr', 0))
-        yesterday_close = float(curr.get('stck_sdpr', 0)) 
-        
-        if current_price == 0 or yesterday_close == 0:
-            continue
-
-        # Find matching target in state
-        target = next((t for t in state["buy_targets"] if t['code'] == code), None)
-        
-        # [Recovery Logic] If target missing (e.g. Restart), create dummy target to manage it
-        if not target:
-            if code in state["exclude_list"]:
-                continue
-                
-            logging.info(f"⚠️ Managing Orphaned Order for {code} (Recovered from API)")
-            
-            # Fetch name from current price info if possible
-            name = curr.get('hts_kor_isnm', 'Unknown')
-            
-            target = {
-                "code": code, 
-                "name": name,
-                "close_yesterday": yesterday_close,
-                # No initial_price/time means it will hit the Fallback Logic (Chase Current Price)
-            }
-            state["buy_targets"].append(target) 
-
-        # Cancel if price surged >5%
-        if current_price > yesterday_close * 1.05:
-            logging.info(f"🚫 {code} rose too much (>5%). Cancelling...")
-            kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'], 0, 0, is_cancel=True)
-            telegram.send_message(f"🗑️ Cancelled {code}: Price > +5%")
-            continue
-
-        # Determine which order this is (1st or 2nd)
-        initial_price = target.get('initial_order_price')
-        order_time = target.get('initial_order_time')
-
-        # If this is a second order, use second order initial price
-        if 'second_order_initial_price' in target:
-            second_initial = target['second_order_initial_price']
-            second_time = target.get('second_order_time')
-            if abs(order_price - second_initial) < abs(order_price - initial_price):
-                initial_price = second_initial
-                order_time = second_time
-
-        if not initial_price or not order_time:
-            # Fallback Logic (Legacy/Orphaned if logic existed)
-            rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
-            if rem_qty > 0 and order_price != current_price:
-                kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'],
-                                       rem_qty, int(current_price), is_cancel=False)
-                logging.info(f"✏️ Modified {code} -> {int(current_price):,} (Fallback Default)")
-                telegram.send_message(f"✏️ Modified {code} -> {int(current_price):,}")
-            else:
-                 logging.info(f"ℹ️ [Monitor] {code}: Fallback condition not met (P:{order_price} vs C:{current_price})")
-            continue
-
-        # Calculate how many intervals have passed
-        elapsed_time = now - order_time
-        intervals_passed = int(elapsed_time / increment_interval)
-
-        # Calculate target price based on intervals
-        price_increase_pct = min(intervals_passed * increment_step, max_increase)
-        target_price = int(initial_price * (1 + price_increase_pct))
-        target_price = kis.get_valid_price(target_price)
-
-        # Don't exceed current market price
-        target_price = min(target_price, int(current_price))
-
-        # Only revise if different from current order price
-        rem_qty = int(ord['ord_qty']) - int(ord['ccld_qty'])
-        
-        # Debug Log
-        logging.info(f"[Monitor] {code}: Ord:{order_price:.0f} Cur:{current_price:.0f} Tgt:{target_price} "
-                     f"Init:{initial_price:.0f} Elast:{elapsed_time:.0f}s Inv:{intervals_passed} (+{price_increase_pct*100:.1f}%)")
-
-        if rem_qty > 0 and target_price != int(order_price):
-            logging.info(
-                f"📈 Gradual increase {code}: "
-                f"{int(order_price):,} → {target_price:,} "
-                f"(+{price_increase_pct*100:.1f}%, interval {intervals_passed})"
-            )
-            kis.revise_cancel_order(ord['krx_fwdg_ord_orgno'], ord['orgn_odno'],
-                                   rem_qty, target_price, is_cancel=False)
-
-def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, force=False):
-    """
-    Schedule: 
-      - Console Log: Every minute (approx)
-      - Telegram: Every hour at minute 10 (08:10, 09:10, ..., 18:10)
-    """
-    now = get_now_kst()
-    hour = now.hour
-    minute = now.minute
-    current_time_str = now.strftime("%H:%M")
-    
-    # --- 1. Control Console Logging Frequency (Every Minute) ---
-    should_log = False
-    if state.get("last_log_minute") != current_time_str:
-        should_log = True
-        state["last_log_minute"] = current_time_str
-        
-    if force: should_log = True
-    
-    # If we don't need to log AND don't need to send, return early
-    # But wait, we need to check if we should send telegram.
-    
-    # --- 2. Control Telegram Frequency (Hourly at XX:10) ---
-    should_send_telegram = False
-    if force:
-        should_send_telegram = True
-    elif 8 <= hour <= 18:
-        if minute == 10:
-             if state["last_sent_hour"] != hour:
-                 should_send_telegram = True
-    
-    # If neither, skip
-    if not should_log and not should_send_telegram:
-        return
-
-    # Update Telegram State
-    if should_send_telegram and not force:
-        state["last_sent_hour"] = hour
-
-    # Fetch Data
-    balance = kis.get_balance()
-    if not balance: return
-    
-    holdings = [h for h in balance['holdings'] if int(h['hldg_qty']) > 0]
-    
-    # If no holdings, maybe just return unless force?
-    if not holdings:
-        if force: logging.info("No holdings to display.")
-        return
-        
-    msg_lines = [f"📊 Holdings Status ({now.strftime('%H:%M')})"]
-    if should_log:
-        logging.info("-" * 60)
-    
-    # Optimization: Fetch shorter history for RSI(3) display
-    start_date = (get_now_kst() - timedelta(days=200)).strftime("%Y%m%d")
-    
-    for h in holdings:
-        name = h['prdt_name']
-        code = h['pdno']
-        curr = float(h['prpr'])
-        avg = float(h['pchs_avg_pric'])
-        
-        # Calculate RSI
-        # Only fetch if we are going to log OR send
-        time.sleep(0.2 if kis.is_mock else 0.1) # Brief delay
-        df = kis.get_ohlcv_cached(code, start_date=start_date)
-        rsi_val = 0.0
-        if not df.empty:
-            df = strategy.calculate_indicators(df)
-            if not df.empty and 'RSI' in df.columns:
-                rsi_val = df['RSI'].iloc[-1]
-
-        
-        # Profit
-        profit_amt = (curr - avg) * int(h['hldg_qty'])
-        profit_pct = (curr - avg) / avg * 100
-        
-        days_held = trade_manager.get_holding_days(code, df=df)
-        
-        line = f"🔹 {name}: {curr:,.0f} (RSI: {rsi_val:.2f}) | P/L: {profit_pct:.2f}% ({days_held}d) | ₩{int(profit_amt):,}"
-        
-        msg_lines.append(line)
-        
-        # LOGGING (Every Minute)
-        if should_log:
-            logging.info(line)
-        
-    # TELEGRAM (Hourly)
-    if should_send_telegram:
-        full_msg = "\n".join(msg_lines)
-        telegram.send_message(full_msg)
-        
-        # Save to Trading Journal (Overwrite daily to keep latest)
-        try:
-             # Map KIS Totals to Journal
-             # Note: 'daily_profit_loss' here will store TOTAL P/L because KIS gives Total.
-             # 'daily_return_pct' stores Total Return %.
-             # This is acceptable for a snapshot.
-             
-             db_manager.save_journal_entry(
-                 date=now.strftime("%Y-%m-%d"),
-                 total_balance=balance['total_asset'],
-                 daily_profit_loss=balance['total_pnl'],
-                 daily_return_pct=balance['total_return_rate'],
-                 holdings_snapshot=full_msg
-             )
-        except Exception as e:
-             logging.error(f"Failed to save journal entry: {e}")
-
-def run_sell_check(kis, telegram, strategy, trade_manager):
-    """15:20 Sell Check"""
-    logging.info("⚖️ [15:20] Checking Sell Signals...")
-    telegram.send_message("⚖️ [15:20] Checking Sell Signals")
-    
-    balance = kis.get_balance()
-    if not balance: return
-    
-    for h in balance['holdings']:
-        qty = int(h['hldg_qty'])
-        if qty == 0: continue
-        
-        code = h['pdno']
-        name = h['prdt_name']
-        
-        df = kis.get_daily_ohlcv(code)
-        
-        # Check Exclusion
-        if code in state["exclude_list"]:
-             continue
-
-        df = strategy.calculate_indicators(df)
-        
-        forced_sell = trade_manager.check_forced_sell(code, df=df)
-        
-        if strategy.check_sell_signal(code, df) or forced_sell:
-             reason = "Forced (Max Holding)" if forced_sell else "Signal"
-             logging.info(f"🔻 Sell Signal Identified for {name} ({code}) [{reason}]")
-
-def run_sell_execution(kis, telegram, strategy, trade_manager):
-    """15:26 Execute Market Sell for targets"""
-    logging.info("💸 [15:26] Executing Market Sells...")
-    telegram.send_message("💸 [15:26] Market Sell Execution")
-    
-    balance = kis.get_balance()
-    
-    for h in balance['holdings']:
-        qty = int(h['hldg_qty'])
-        if qty == 0: continue
-        
-        code = h['pdno']
-        name = h['prdt_name']
-
-        if code in state["exclude_list"]:
-            logging.info(f"🚫 Sell Execution Skipped {name} ({code}) (Excluded)")
-            continue
-        
-        # Get Data & RSI
-        df = kis.get_daily_ohlcv(code)
-        df = strategy.calculate_indicators(df)
-        
-        # Check RSI > 70 or Forced Sell
-        forced_sell = trade_manager.check_forced_sell(code, df=df)
-        
-        if strategy.check_sell_signal(code, df) or forced_sell:
-             reason = "Forced" if forced_sell else "Signal"
-             # Execute Market Sell (01)
-             success, msg = kis.send_order(code, qty, side="sell", price=0, order_type="01")
-             if success:
-                 logging.info(f"👋 Sold {name} ({reason}): {msg}")
-                 telegram.send_message(f"👋 Sold {name} ({reason}): {msg}")
-                 
-                 # Calculate P/L for History
-                 curr = float(h['prpr'])
-                 avg = float(h['pchs_avg_pric'])
-                 if avg > 0:
-                     pnl_pct = (curr - avg) / avg * 100
-                 else:
-                     pnl_pct = 0.0
-                     
-                 trade_manager.update_sell(code, name, get_now_kst().strftime("%Y%m%d"), curr, qty, pnl_pct)
-             else:
-                 telegram.send_message(f"❌ Sell Failed {name}: {msg}")
 
 def sync_trades_at_close(kis, telegram, trade_manager):
-    """
-    15:40: 장 마감 후 오늘의 체결 내역을 조회하여 DB에 저장.
-    - 동일 종목 다중 매수 → 평균단가로 1건 기록
-    - 실제 체결가 기준으로 정확한 기록
-    """
-    logging.info("📝 [15:40] 오늘의 체결 내역 동기화 시작...")
-    
+    """15:40: 체결 기록 동기화"""
+    logging.info("📝 [15:40] Syncing Trade History...")
     today_str = get_now_kst().strftime("%Y%m%d")
-    db_date = f"{today_str[:4]}-{today_str[4:6]}-{today_str[6:]}"
-
-    # 중복 체크: 이미 오늘 기록이 있으면 스킵
-    if trade_manager.db and trade_manager.db.has_trade_history_for_date(db_date):
-        msg = f"ℹ️ [15:40] 오늘({db_date}) 거래 기록이 이미 존재합니다. 동기화를 건너뜁니다."
-        logging.info(msg)
-        # telegram.send_message(msg) # 알림은 생략하거나 필요시 추가
-        return
-
-    telegram.send_message("📝 [15:40] 거래 기록 동기화 시작")
+    trades = kis.get_period_trades(today_str, today_str) or []
     
-    # 1. 오늘의 전체 체결 내역 조회
-    trades = kis.get_period_trades(today_str, today_str)
-    
-    if not trades:
-        logging.info("ℹ️  오늘 체결 내역 없음")
-        telegram.send_message("ℹ️ 오늘 체결된 거래 없음")
-        return
-    
-    # 2. 종목별/매수매도별 집계
-    # 구조: {code: {'buy': {'total_qty': 0, 'total_amt': 0, 'name': ''}, 'sell': {...}}}
     aggregated = {}
-    
-    for trade in trades:
-        code = trade.get('pdno', '')
-        name = trade.get('prdt_name', '')
-        
-        # 체결 수량/금액
-        filled_qty = int(trade.get('tot_ccld_qty', 0))
-        filled_amt = float(trade.get('tot_ccld_amt', 0))
-        
-        # 매수/매도 구분 (sll_buy_dvsn_cd: 01=매도, 02=매수)
-        side_code = trade.get('sll_buy_dvsn_cd', '')
-        side = 'sell' if side_code == '01' else 'buy'
-        
-        if filled_qty == 0:
-            continue
-        
-        if code not in aggregated:
-            aggregated[code] = {
-                'buy': {'total_qty': 0, 'total_amt': 0.0, 'name': name},
-                'sell': {'total_qty': 0, 'total_amt': 0.0, 'name': name}
-            }
-        
-        aggregated[code][side]['total_qty'] += filled_qty
-        aggregated[code][side]['total_amt'] += filled_amt
-        aggregated[code][side]['name'] = name  # 이름 갱신
-    
-    # 3. 집계된 데이터를 DB에 저장
-    buy_count = 0
-    sell_count = 0
-    
+    for t in trades:
+        code = t.get('pdno', '')
+        filled_qty = int(t.get('tot_ccld_qty', 0))
+        filled_amt = float(t.get('tot_ccld_amt', 0))
+        if filled_qty == 0: continue
+        side = 'sell' if t.get('sll_buy_dvsn_cd') == '01' else 'buy'
+        if code not in aggregated: aggregated[code] = {'buy': {'qty': 0, 'amt': 0.0}, 'sell': {'qty': 0, 'amt': 0.0}, 'name': t.get('prdt_name')}
+        aggregated[code][side]['qty'] += filled_qty
+        aggregated[code][side]['amt'] += filled_amt
+
     for code, data in aggregated.items():
-        # 매수 기록
-        buy_data = data['buy']
-        if buy_data['total_qty'] > 0:
-            avg_price = buy_data['total_amt'] / buy_data['total_qty']
-            qty = buy_data['total_qty']
-            name = buy_data['name']
+        if data['buy']['qty'] > 0:
+            trade_manager.update_buy(code, data['name'], today_str, data['buy']['amt']/data['buy']['qty'], data['buy']['qty'])
+        if data['sell']['qty'] > 0:
+            trade_manager.update_sell(code, data['name'], today_str, data['sell']['amt']/data['sell']['qty'], data['sell']['qty'], 0.0)
             
-            # TradeManager (holdings 추적용)
-            trade_manager.update_buy(code, name, today_str, avg_price, qty)
-            
-            logging.info(f"📗 BUY 기록: {name}({code}) {qty}주 @ {avg_price:,.0f}원 (총 {buy_data['total_amt']:,.0f}원)")
-            buy_count += 1
-        
-        # 매도 기록
-        sell_data = data['sell']
-        if sell_data['total_qty'] > 0:
-            avg_price = sell_data['total_amt'] / sell_data['total_qty']
-            qty = sell_data['total_qty']
-            name = sell_data['name']
-            
-            # P/L 계산: 보유 정보에서 평균 매수가 조회 필요
-            # 현재 구조에서는 매도 시점에 P/L을 계산하기 어려움
-            # run_sell_execution에서 이미 update_sell 호출하므로 여기서는 스킵
-            # (매도는 run_sell_execution에서 처리됨)
-            
-            logging.info(f"📕 SELL 체결 확인: {name}({code}) {qty}주 @ {avg_price:,.0f}원")
-            sell_count += 1
-    
-    msg = (
-        f"✅ 거래 기록 동기화 완료\n"
-        f"📗 매수: {buy_count}건\n"
-        f"📕 매도: {sell_count}건"
-    )
-    logging.info(msg)
-    telegram.send_message(msg)
+    telegram.send_message("✅ Daily Trade Sync Complete.")
 
 if __name__ == "__main__":
     main()
