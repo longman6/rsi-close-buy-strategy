@@ -254,8 +254,10 @@ def main():
                         run_morning_sell_execution(kis, telegram, trade_manager)
                         state["sell_exec_done"] = True
 
-                # 3. 15:10 Evening Buy Analysis (Analyze for Close Buy)
-                if current_time >= config.TIME_SELL_CHECK and current_time < config.TIME_SELL_EXEC:
+                # 3. Evening Buy Analysis (Analyze for Close Buy)
+                # 모의투자(kis.is_mock)일 경우 Rate Limit 대응을 위해 분석 시간을 15:00으로 앞당김
+                buy_anal_start_time = "15:00" if kis.is_mock else config.TIME_SELL_CHECK
+                if current_time >= buy_anal_start_time and current_time < config.TIME_SELL_EXEC:
                     if not state["buy_analysis_done"]:
                         run_evening_buy_analysis(kis, telegram, strategy, trade_manager, db_manager)
                         state["buy_analysis_done"] = True
