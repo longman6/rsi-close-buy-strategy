@@ -437,10 +437,28 @@ def run_evening_buy_execution(kis, telegram, trade_manager):
         qty = int(amt_per_stock / price)
         if qty < 1: continue
         
+        # [Patch] Check Buyable Cash
+        try:
+            buyable = kis.get_buyable_cash()
+            max_amt = float(buyable.get('max_buy', 0))
+            expected_needed = qty * price
+            
+            if expected_needed > max_amt:
+                logging.warning(f"⚠️ Insufficient Cash for {target['name']}. Needed: {expected_needed:.0f}, Max: {max_amt:.0f}. Adjusting qty.")
+                qty = int(max_amt / price)
+        except Exception as e:
+            logging.error(f"⚠️ Failed to check buying power: {e}")
+
+        if qty < 1: 
+            logging.warning(f"⚠️ Qty adjusted to 0. Skipping {target['name']}.")
+            continue
+
         success, msg = kis.send_order(target['code'], qty, side="buy", price=0, order_type="01")
         if success:
             logging.info(f"✅ Buy Order: {target['name']} ({qty}주)")
             telegram.send_message(f"✅ Buy Order: {target['name']}\nQty: {qty}")
+            # cash -= (qty * price) # Recalculated nicely by get_buyable_cash each time effectively, though we might want to keep local tracking for speed if we didn't call API every time. 
+            # But the patch calls API every time.
             cash -= (qty * price)
         time.sleep(0.2)
 
