@@ -340,70 +340,139 @@ class KISClient:
 
     def get_ohlcv_cached(self, code, start_date=None, end_date=None):
         """
-        Fetch OHLCV using local cache + Current Day API (Optimization).
+        Fetch OHLCV using local cache + Gap Filling + Real-time Update.
         1. Load data/ohlcv/{code}.pkl
-        2. If file missing or old, fallback to full API (get_daily_ohlcv).
-        3. If file exists, append today's current price (OHLCV) if needed.
+        2. If gap exists between cache and today, fetch missing days via API.
+        3. Append/Update today's real-time price.
+        4. (Optional) Save updated history to cache if gap was large? (Skipping save to avoid partial corruption, in-memory only)
         """
         cache_dir = "data/ohlcv"
         cache_path = os.path.join(cache_dir, f"{code}.pkl")
         
-        df_cached = pd.DataFrame()
+        df = pd.DataFrame()
         
         # 1. Load Cache
         if os.path.exists(cache_path):
             try:
-                df_cached = pd.read_pickle(cache_path)
+                df = pd.read_pickle(cache_path)
             except Exception:
                 pass
 
-        today_str = datetime.now().strftime("%Y%m%d")
+        today = datetime.now()
+        today_str = today.strftime("%Y%m%d")
         
-        # 2. Check Cache Validity
-        if df_cached.empty:
-            # No cache, fetch full history
+        # 2. Check Cache & Fill Gap
+        if df.empty:
+            # Full Fetch
             df = self.get_daily_ohlcv(code, start_date=start_date, end_date=end_date)
-            # Save for next time (even if it's today mid-day, next run will just overwrite or append? 
-            # We should save only 'closed' days ideally, to avoid saving partial candles permanently.
-            # But here we just follow the user instruction: "Analyze script saves daily".
-            # If we fetch here, we don't save to file to avoid corrupting the 'official' daily cache with partial data.
-            return df
-        
-        # 3. Append Today's Data (Real-time)
-        # Check if cache includes today
-        if not df_cached.empty:
-            last_date = df_cached.iloc[-1]['Date']
-            if last_date.strftime("%Y%m%d") < today_str:
-                # Need today's data
-                curr = self.get_current_price(code)
-                if curr:
-                    try:
-                        # Construct OHLCV row from current price info
-                        # curr dict has: stck_prpr (Close), stck_oprc (Open), stck_hgpr (High), stck_lwpr (Low), acml_vol (Vol)
-                        new_row = {
-                            'Date': pd.to_datetime(today_str),
-                            'Open': float(curr['stck_oprc']),
-                            'High': float(curr['stck_hgpr']),
-                            'Low': float(curr['stck_lwpr']),
-                            'Close': float(curr['stck_prpr']),
-                            'Volume': int(curr['acml_vol'])
-                        }
-                        
-                        # Only add if valid (sometimes open is 0 before market start)
-                        if new_row['Close'] > 0:
-                            # Append
-                            # Use concat
-                            today_df = pd.DataFrame([new_row])
-                            df_cached = pd.concat([df_cached, today_df], ignore_index=True)
-                            
-                    except Exception as e:
-                        logging.warning(f"[KIS] Failed to append today's data: {e}")
-                        
-        # Filter by start_date if needed
-        if start_date:
-            df_cached = df_cached[df_cached['Date'] >= pd.to_datetime(start_date)]
+            # If we fetched everything, we might as well save it if it's substantial history?
+            # For now, keep inconsistent-save policy from before to be safe.
+        else:
+            # Has cache. Check last date.
+            last_dt = df.iloc[-1]['Date']
+            last_date_str = last_dt.strftime("%Y%m%d")
             
-        return df_cached
+            # If last date is earlier than today, we might have a gap.
+            # Even if it is yesterday, we might want to ensure we have up to today.
+            if last_date_str < today_str:
+                # Calculate start_fetch_date = last_date + 1 day
+                next_day = last_dt + timedelta(days=1)
+                fetch_start = next_day.strftime("%Y%m%d")
+                
+                if fetch_start <= today_str:
+                    # Fetch from fetch_start to today
+                    # logging.info(f"[KIS] Filling gap for {code}: {fetch_start} ~ {today_str}")
+                    gap_df = self.get_daily_ohlcv(code, start_date=fetch_start, end_date=today_str)
+                    
+                    if not gap_df.empty:
+                        # Append
+                        df = pd.concat([df, gap_df]).drop_duplicates(subset=['Date'], keep='last')
+                        df = df.sort_values('Date').reset_index(drop=True)
+
+        # 3. Force Update Today's Candle with Real-Time Current Price
+        # (Chart API might be delayed or have different values than current price API)
+        curr = self.get_current_price(code)
+        if curr:
+            curr_price = float(curr['stck_prpr'])
+            try:
+                # Check if today exists in df
+                current_dt_normalized = pd.to_datetime(today_str)
+                
+                if not df.empty and df.iloc[-1]['Date'] == current_dt_normalized:
+                    # Update existing today row
+                    df.at[df.index[-1], 'Close'] = curr_price
+                    df.at[df.index[-1], 'High'] = max(df.iloc[-1]['High'], float(curr['stck_hgpr']))
+                    df.at[df.index[-1], 'Low'] = min(df.iloc[-1]['Low'], float(curr['stck_lwpr']))
+                    df.at[df.index[-1], 'Volume'] = int(curr['acml_vol'])
+                    # Open should be stable
+                else:
+                    # Append new today row
+                    new_row = {
+                        'Date': current_dt_normalized,
+                        'Open': float(curr['stck_oprc']),
+                        'High': float(curr['stck_hgpr']),
+                        'Low': float(curr['stck_lwpr']),
+                        'Close': curr_price,
+                        'Volume': int(curr['acml_vol'])
+                    }
+                    if new_row['Close'] > 0: # Valid data check
+                         new_df = pd.DataFrame([new_row])
+                         df = pd.concat([df, new_df], ignore_index=True)
+            except Exception as e:
+                 logging.warning(f"[KIS] Failed to merge real-time price: {e}")
+
+        # Filter by start_date if needed
+        if start_date and not df.empty:
+            df = df[df['Date'] >= pd.to_datetime(start_date)]
+            
+        return df
+
+    def refresh_ohlcv_cache(self, universe_list):
+        """
+        Force-refresh OHLCV cache for the entire universe.
+        Deletes existing .pkl files and fetches fresh data.
+        """
+        logging.info(f"🔄 Starting Full OHLCV Cache Refresh for {len(universe_list)} stocks...")
+        count = 0
+        cache_dir = "data/ohlcv"
+        
+        for item in universe_list:
+            code = item['code']
+            name = item['name']
+            cache_path = os.path.join(cache_dir, f"{code}.pkl")
+            
+            # 1. Delete existing cache
+            if os.path.exists(cache_path):
+                try:
+                    os.remove(cache_path)
+                except Exception as e:
+                    logging.warning(f"Failed to delete cache for {code}: {e}")
+            
+            # 2. Fetch Fresh Data & Save
+            # get_daily_ohlcv returns DF but doesn't save (helper). 
+            # We must save it explicitly here to rebuild the cache files.
+            
+            try:
+                # Fetch full history (~2 years default)
+                # Calculate start_date = 2 years ago
+                start_date = (datetime.now() - timedelta(days=730)).strftime("%Y%m%d")
+                df = self.get_daily_ohlcv(code, start_date=start_date)
+                
+                if not df.empty:
+                    if not os.path.exists(cache_dir):
+                        os.makedirs(cache_dir)
+                    df.to_pickle(cache_path)
+                    count += 1
+            except Exception as e:
+                logging.error(f"Failed to refresh {name} ({code}): {e}")
+                
+            # Rate Limit (Mock: 0.5s, Real: 0.1s)
+            time.sleep(0.3)
+            
+            if (count + 1) % 10 == 0:
+                logging.info(f"   Refreshed {count+1}/{len(universe_list)}...")
+                
+        logging.info(f"✅ Full OHLCV Refresh Complete. Updated {count} files.")
 
     def get_balance(self):
         """

@@ -94,8 +94,9 @@ def calculate_rsi(data, window):
     
     # Use SMA (Rolling Mean) instead of Wilder's Smoothing (EWM)
     # This matches the logic used in 'optimize_all_dense.py' which yielded superior results.
-    avg_gain = gain.rolling(window=window).mean()
-    avg_loss = loss.rolling(window=window).mean()
+    # Wilder's Smoothing (Standard)
+    avg_gain = gain.ewm(alpha=1/window, min_periods=window, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/window, min_periods=window, adjust=False).mean()
     
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))

@@ -187,6 +187,19 @@ def display_holdings_status(kis, telegram, strategy, trade_manager, db_manager, 
 
         msg += f"\n• {name}: {qty}주 | {profit_rate:+.2f}% | D+{days_held}"
 
+        # [Patch] Calculate RSI for display
+        try:
+            # Fetch ~200 days for SMA(70) calculation safety
+            start_date = (now - timedelta(days=200)).strftime("%Y%m%d")
+            df = kis.get_daily_ohlcv(code, start_date=start_date)
+            if not df.empty:
+                df = strategy.calculate_indicators(df)
+                latest_rsi = df.iloc[-1]['RSI']
+                if not pd.isna(latest_rsi):
+                    msg += f" | RSI: {latest_rsi:.1f}"
+        except Exception as e:
+            logging.error(f"Failed to calc RSI for {name}: {e}")
+
     logging.info(msg)
     telegram.send_message(msg)
     
@@ -240,6 +253,19 @@ def main():
             now = get_now_kst()
             current_time = now.strftime("%H:%M")
             reset_daily_state(kis)
+
+            # [Scheduled Task] 05:00 Refresh OHLCV Cache
+            if current_time == "05:00":
+                if not state.get("refresh_done", False):
+                    logging.info("🧹 [05:00] Starting Daily OHLCV Cache Refresh...")
+                    universe = get_kosdaq150_universe()
+                    if universe:
+                        kis.refresh_ohlcv_cache(universe)
+                        state["refresh_done"] = True
+                        telegram.send_message("✅ Daily OHLCV Refresh Complete.")
+            else:
+                # Reset flag if not 05:00
+                state["refresh_done"] = False
 
             if not state["is_holiday"]:
                 # 1. 08:30 Morning Sell Analysis (Yesterday's signals)

@@ -40,13 +40,14 @@ class Strategy:
         # SMA 
         df['SMA'] = df['Close'].rolling(window=self.sma_window).mean()
         
-        # RSI (Simple Moving Average version - matches our successful backtest)
+        # RSI (Wilder's Smoothing version - Standard)
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).fillna(0)
         loss = (-delta.where(delta < 0, 0)).fillna(0)
         
-        avg_gain = gain.rolling(window=self.rsi_window).mean()
-        avg_loss = loss.rolling(window=self.rsi_window).mean()
+        # Wilder's Smoothing: alpha = 1/N
+        avg_gain = gain.ewm(alpha=1/self.rsi_window, min_periods=self.rsi_window, adjust=False).mean()
+        avg_loss = loss.ewm(alpha=1/self.rsi_window, min_periods=self.rsi_window, adjust=False).mean()
         
         rs = avg_gain / avg_loss
         df['RSI'] = 100 - (100 / (1 + rs))
