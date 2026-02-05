@@ -134,6 +134,9 @@ class DBManager:
         try:
             with sqlite3.connect(self.market_db) as conn:
                 cursor = conn.cursor()
+                # 기존 데이터 삭제 (덮어쓰기)
+                cursor.execute("DELETE FROM daily_rsi WHERE date = ? AND code = ?", (date, code))
+                
                 is_above_int = 1 if is_above_sma else 0
                 is_low_int = 1 if is_low_rsi else 0
                 cursor.execute("""

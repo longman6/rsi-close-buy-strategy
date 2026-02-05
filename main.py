@@ -422,6 +422,14 @@ def run_evening_buy_analysis(kis, telegram, strategy, trade_manager, db_manager)
         
         # 3. Strategy Conditions (RSI <= threshold AND Close > SMA)
         if not pd.isna(rsi) and not pd.isna(sma):
+            # Save Analysis Result to DB
+            db_manager.save_rsi_result(
+                get_now_kst().strftime("%Y-%m-%d"),
+                code, name, float(rsi), float(close), float(sma),
+                is_above_sma=(close > sma),
+                is_low_rsi=(rsi <= config.RSI_BUY_THRESHOLD)
+            )
+
             if rsi <= config.RSI_BUY_THRESHOLD and close > sma:
                 # 4. Dangerous stock check (Final filter)
                 is_dangerous, reason = kis.check_dangerous_stock(code)
