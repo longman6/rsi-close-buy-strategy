@@ -420,6 +420,9 @@ def run_evening_buy_analysis(kis, telegram, strategy, trade_manager, db_manager)
         sma = latest['SMA']
         close = latest['Close']
         
+        # [DEBUG] 상세 로그 출력 (사용자 요청)
+        logging.info(f"🧐 Check: {name}({code}) RSI:{rsi:.2f} SMA:{sma:.1f} Close:{close:,.0f}")
+
         # 3. Strategy Conditions (RSI <= threshold AND Close > SMA)
         if not pd.isna(rsi) and not pd.isna(sma):
             # Save Analysis Result to DB
