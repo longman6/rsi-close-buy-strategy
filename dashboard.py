@@ -370,7 +370,7 @@ def render_dashboard():
             # 1. Name
             url_naver = f"https://finance.naver.com/item/main.naver?code={code}"
             url_toss = f"https://www.tossinvest.com/stocks/A{code}/analytics"
-            c1.markdown(f"[{name}]({url_naver}) [\[T\]]({url_toss})\n`{code}`")
+            c1.markdown(f"[{name}]({url_naver}) [\\[T\\]]({url_toss})\n`{code}`")
             
             # 2. Price
             c2.write(f"{curr:,.0f}\n({avg:,.0f})")
@@ -596,7 +596,7 @@ def render_ai_advice_page():
         with st.expander(title):
             url_naver = f"https://finance.naver.com/item/main.naver?code={code}"
             url_toss = f"https://www.tossinvest.com/stocks/A{code}/analytics"
-            st.markdown(f"### 🔗 [{name} ({code})]({url_naver}) [\[T\]]({url_toss})")
+            st.markdown(f"### 🔗 [{name} ({code})]({url_naver}) [\\[T\\]]({url_toss})")
             if not opinions:
                 st.caption("No advice details.")
             else:
