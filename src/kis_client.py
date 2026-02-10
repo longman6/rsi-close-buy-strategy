@@ -182,7 +182,7 @@ class KISClient:
         }
         
         try:
-            res = requests.post(url, headers=headers, data=json.dumps(body))
+            res = requests.post(url, headers=headers, data=json.dumps(body), timeout=10)
             data = res.json()
             if 'access_token' in data:
                 self.access_token = data['access_token']
@@ -490,7 +490,7 @@ class KISClient:
             "ACNT_PRDT_CD": config.KIS_ACNT_PRDT_CD,
             "AFHR_FLPR_YN": "N",
             "OFL_YN": "N",
-            "INQR_DVSN": "02",
+            "INQR_DVSN": "01",  # 01: 대출일별, 02: 종목별 (공식 예제: "01")
             "UNPR_DVSN": "01",
             "FUND_STTL_ICLD_YN": "N",
             "FNCG_AMT_AUTO_RDPT_YN": "N",
