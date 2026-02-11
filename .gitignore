@@ -50,4 +50,4 @@ backtest_result.png
 *.png
 test_openai.py
 *.pkl
-logs/bot.pid
+logs/
