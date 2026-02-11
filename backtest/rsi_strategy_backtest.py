@@ -49,12 +49,12 @@ TX_FEE_RATE = 0.00015  # 0.015%
 TAX_RATE = 0.0020      # 0.20% (매도 시) - 2024년 기준 0.18%? 보수적으로 0.2%
 SLIPPAGE_RATE = 0.001   # 0.1%
 
-# Strategy Parameters (Default - Optimized)
+# Strategy Parameters (Default - Ultra Optimized)
 RSI_WINDOW = 5
-SMA_WINDOW = 60
-BUY_THRESHOLD = 35
-SELL_THRESHOLD = 70
-MAX_HOLDING_DAYS = 30
+SMA_WINDOW = 90
+BUY_THRESHOLD = 32
+SELL_THRESHOLD = 74
+MAX_HOLDING_DAYS = 50
 MAX_POSITIONS = 5
 
 # ---------------------------------------------------------
@@ -247,6 +247,35 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
 
 
 # ---------------------------------------------------------
+def get_benchmark_annual_returns(start_date, end_date):
+    """Fetch Benchmark Data and Calculate Annual Returns"""
+    benchmarks = {
+        'KODEX 200': '069500',
+        'KODEX 150': '229200', # KODEX 코스닥150
+        'KOSDAQ': 'KQ11'       # KOSDAQ Index
+    }
+    
+    results = {}
+    
+    for name, code in benchmarks.items():
+        try:
+            df = fdr.DataReader(code, start_date, end_date)
+            if not df.empty:
+                # Calculate Yearly Return
+                df['Year'] = df.index.year
+                yearly = df['Close'].resample('Y').last().pct_change() * 100
+                # First year return (from start to end of first year)
+                first_year = df.index.year[0]
+                first_val = df['Close'].iloc[0]
+                first_year_end_val = df[df.index.year == first_year]['Close'].iloc[-1]
+                yearly.loc[pd.Timestamp(f"{first_year}-12-31")] = (first_year_end_val - first_val) / first_val * 100
+                
+                results[name] = yearly.sort_index()
+        except Exception as e:
+            print(f"⚠️ Benchmark {name} load failed: {e}")
+            
+    return pd.DataFrame(results)
+
 # 4. 시뮬레이션 엔진
 # ---------------------------------------------------------
 def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False, 
@@ -689,6 +718,7 @@ def run_comparative_backtest():
         return
 
     results = []
+    equity_curves = {}
 
     print(f"\n🚀 Running Comparative Backtest for options: {list(configs.keys())}")
     print(f"📊 Total Universe Size (All Time): {len(all_tickers)}")
@@ -697,8 +727,6 @@ def run_comparative_backtest():
         print(f"\n>>> [Option {name}] Parameters: {cfg}")
         
         # Prepare Data (Load ALL tickers once)
-        # Note: Optimization - we could load data once outside loop, but config might change windows.
-        # However, data loading is heavy. If window changes, indicators change.
         stock_data, _ = prepare_data(
             all_tickers, 
             START_DATE, 
@@ -728,39 +756,113 @@ def run_comparative_backtest():
             "Params": cfg
         })
         print(f"   👉 Result: Return {ret:.2f}%, MDD {mdd:.2f}%, WinRate {win_rate:.2f}%")
+        
+        # Calculate Annual Returns
+        if not hist.empty:
+            hist['Year'] = hist.index.year
+            yearly = hist['Equity'].resample('Y').last().pct_change() * 100
+            
+            # First year calculation
+            y1 = hist.index.year[0]
+            v1 = INITIAL_CAPITAL
+            y1_data = hist[hist.index.year == y1]
+            if not y1_data.empty:
+                v1_end = y1_data['Equity'].iloc[-1]
+                yearly.loc[pd.Timestamp(f"{y1}-12-31")] = (v1_end - v1) / v1 * 100
+            
+            equity_curves[name] = yearly.sort_index()
+
+    # ---------------------------------------------------------
+    # Benchmark Comparison
+    # ---------------------------------------------------------
+    print("\n📊 Loading Benchmark Data (KODEX 200, KODEX 150)...")
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    bench_df = get_benchmark_annual_returns(START_DATE, end_date)
+    
+    # Calculate Benchmark Overall Stats
+    benchmark_stats = []
+    benchmarks = {
+        'KODEX 200': '069500', 
+        'KODEX 150': '229200'
+    }
+    
+    for name, code in benchmarks.items():
+        try:
+            df = fdr.DataReader(code, START_DATE, end_date)
+            if not df.empty:
+                # Cumulative Return
+                start_p = df['Close'].iloc[0]
+                end_p = df['Close'].iloc[-1]
+                cum_ret = (end_p - start_p) / start_p * 100
+                
+                # MDD
+                peak = df['Close'].cummax()
+                dd = (df['Close'] - peak) / peak
+                mdd = dd.min() * 100
+                
+                benchmark_stats.append({
+                    "Name": name,
+                    "Return": cum_ret,
+                    "MDD": mdd,
+                    "WinRate": 0, "Count": 0, "Params": None # Placeholder
+                })
+        except:
+            pass
+
+    # Combine Strategy & Benchmark
+    combined_df = bench_df.copy()
+    for name, ser in equity_curves.items():
+        combined_df[name] = ser
+
+    # Format Index to Year only for display
+    combined_df.index = combined_df.index.year
+    combined_df = combined_df.sort_index()
 
     # Generate Report
     print("\n--------------------------------------------------------------")
-    print("📊 Comparative Backtest Results")
+    print("📅 Yearly Performance Comparison (Returns %)")
+    print("--------------------------------------------------------------")
+    print(combined_df.round(2).fillna('-').to_markdown())
+    
+    print("\n--------------------------------------------------------------")
+    print("📊 Overall Strategy Performance")
     print("--------------------------------------------------------------")
     
-    header = f"| Option | Return | MDD | Win Rate | Trades | RSI | SMA | Hold | Pos |\n"
-    header += f"| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+    header = f"| Option | Return | MDD | Win Rate | Trades | RSI | SMA | Hold | Pos |"
+    sep = f"| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
     
     rows = []
+    # Add Benchmarks first
+    for b in benchmark_stats:
+        row = f"| *{b['Name']}* | *{b['Return']:.2f}%* | *{b['MDD']:.2f}%* | - | - | - | - | - | - |"
+        rows.append(row)
+
     for r in results:
         p = r['Params']
         row = f"| **{r['Name']}** | **{r['Return']:.2f}%** | {r['MDD']:.2f}% | {r['WinRate']:.2f}% | {r['Count']} | "
         row += f"{p['rsi_window']} / {p['buy_threshold']}-{p['sell_threshold']} | {p['sma_window']} | {p['max_holding_days']}d | {p['max_positions']} |"
         rows.append(row)
     
-    table = "\n".join(rows)
-    final_report = f"\n{header}\n{table}\n"
-    
-    print(final_report)
-    
-    print(final_report)
-    
-    # Ensure directory exists
-    report_path = "../reports/comparative_backtest_report.md"
+    summary_table = "\n".join(rows)
+    print(header)
+    print(sep)
+    print(summary_table)
+
+    # Save Report
+    report_path = "reports/comparative_backtest_yearly.md"
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     
     with open(report_path, "w", encoding="utf-8") as f:
-        f.write("# Consolidated Backtest Report\n")
-        f.write(f"Generated at: {datetime.now()}\n\n")
-        f.write(final_report)
+        f.write(f"# Yearly Comparative Backtest Report ({datetime.now().strftime('%Y-%m-%d')})\n\n")
         
-    print(f"✅ Report saved to {report_path}")
+        f.write("## 1. Yearly Returns vs KODEX (%)\n")
+        f.write(combined_df.round(2).fillna('-').to_markdown())
+        f.write("\n\n")
+        
+        f.write("## 2. Overall Strategy Performance\n")
+        f.write(f"{header}\n{sep}\n{summary_table}\n")
+        
+    print(f"\n✅ Report saved to {report_path}")
 
 if __name__ == "__main__":
     # run_backtest() 

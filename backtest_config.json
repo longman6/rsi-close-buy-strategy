@@ -25,5 +25,14 @@
         "max_holding_days": 30,
         "max_positions": 5,
         "loss_lockout_days": 30
+    },
+    "Strategy_D_Ultra": {
+        "rsi_window": 5,
+        "sma_window": 90,
+        "buy_threshold": 32,
+        "sell_threshold": 74,
+        "max_holding_days": 50,
+        "max_positions": 5,
+        "loss_lockout_days": 50
     }
 }

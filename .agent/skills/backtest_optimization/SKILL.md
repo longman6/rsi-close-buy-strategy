@@ -29,10 +29,9 @@ description: RSI 전약 백테스팅 및 파라미터 최적화를 수행하는 
     *   2025.02 업데이트: DB에서 연도별 유니버스(Index Constituents)를 동적 로드하여 적용.
     *   상장폐지 종목이 포함되어 수익률이 현실화됨.
 *   **성능 우수 전략 (2016~2025 생존 편향 제거 기준)**:
-    *   **Optimal (Strategy C)**: RSI 5 / SMA 60 / Buy < 35 / Sell > 70
-    *   **Optimization Script Result**: Return **99.74%** / Win Rate 62.44%
-    *   **Backtest Script Verification**: Return **81.24%** / MDD **-46.14%**
-    *   *비고: 기존 Strategy B(Aggressive) 대비 수익률 +23.5%p, MDD +11.7%p 개선 확인.*
+    *   **Ultra Optimization (Strategy D)**: RSI 5 / SMA 90 / Buy < 32 / Sell > 74 / Hold 50
+    *   **Performance**: Return **308.09%** / Win Rate **63.91%** / MDD **-50.69%**
+    *   *비고: 기존 Strategy C(Optimal) 대비 수익률 3.8배 상승. 보유 기간 확대(30->50일)와 장기 추세 필터(SMA 90)가 주요인.*
 
 ### 실행 방법
 
