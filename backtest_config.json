@@ -1,0 +1,20 @@
+{
+    "Strategy_A_Base": {
+        "rsi_window": 3,
+        "sma_window": 100,
+        "buy_threshold": 30,
+        "sell_threshold": 70,
+        "max_holding_days": 40,
+        "max_positions": 5,
+        "loss_lockout_days": 40
+    },
+    "Strategy_B_Aggressive": {
+        "rsi_window": 5,
+        "sma_window": 50,
+        "buy_threshold": 35,
+        "sell_threshold": 75,
+        "max_holding_days": 30,
+        "max_positions": 5,
+        "loss_lockout_days": 30
+    }
+}

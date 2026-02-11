@@ -304,63 +304,25 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 rsi = df.loc[date, 'RSI']
 
                 # 매도 조건: RSI >= SELL_THRESHOLD OR Max Holding Days Reached (Trading Days)
-                sell_signal = False
-                reason = ""
-                
                 if rsi >= sell_threshold:
-                    sell_signal = True
-                    reason = 'SIGNAL'
+                    tickers_to_sell.append({'ticker': ticker, 'reason': 'SIGNAL'})
                 elif pos['held_bars'] >= max_holding_days:
-                    sell_signal = True
-                    reason = 'FORCE'
-                
-                if sell_signal:
-                    # [매도 로직 변경] 당일 종가 매도 -> 익일 시가 매도
-                    # 다음 거래일 확인
-                    next_loc = df.index.get_loc(date) + 1
-                    if next_loc < len(df):
-                        next_date = df.index[next_loc]
-                        sell_price = df.iloc[next_loc]['Open'] # 익일 시가
-                        tickers_to_sell.append({
-                            'ticker': ticker, 
-                            'reason': reason, 
-                            'sell_date': next_date, 
-                            'sell_price': sell_price
-                        })
-                    else:
-                        # 다음 데이터가 없으면... (백테스트 마지막 날)
-                        # 그냥 당일 종가로 청산하거나, 청산 보류
-                        # 여기서는 보수적으로 당일 종가 청산 처리
-                        sell_price = current_price
-                        tickers_to_sell.append({
-                            'ticker': ticker, 
-                            'reason': reason, 
-                            'sell_date': date, 
-                            'sell_price': sell_price
-                        })
+                    tickers_to_sell.append({'ticker': ticker, 'reason': 'FORCE'})
 
             else:
                 current_price = pos['last_price']
 
-            # 아직 보유 중인 것으로 간주하고 평가금액 합산 (매도는 아래 루프에서 처리)
-            # 엄밀히는 익일 시가 매도면 오늘 종가 기준으로는 보유 중임.
             current_positions_value += pos['shares'] * current_price
 
         total_equity = cash + current_positions_value
         history.append({'Date': date, 'Equity': total_equity})
 
-        # 매도 처리 (실제 자산 변동은 익일 시가 기준이지만, 백테스트 편의상 시그널 발생일에 청산 처리하되 가격만 익일 시가 적용)
-        # *주의*: 이렇게 하면 오늘 자산(total_equity)에는 아직 반영 안 된 상태로 기록됨. 
-        # 하지만 거래 로그(trades)에는 익일 시가 수익률이 정확히 기록됨.
-        # 시뮬레이션의 단순화를 위해 '시그널 발생일'에 매도 확정 짓고 현금화하는 것으로 처리.
-        
         for item in tickers_to_sell:
             ticker = item['ticker']
             reason = item['reason']
-            sell_price = item['sell_price']
-            sell_date = item['sell_date'] # 실제 체결일(익일)
             
             pos = positions.pop(ticker)
+            sell_price = stock_data[ticker].loc[date, 'Close']
 
             sell_amt = pos['shares'] * sell_price
             cost = sell_amt * (TX_FEE_RATE + TAX_RATE + SLIPPAGE_RATE)
@@ -372,7 +334,7 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
             trades.append({
                 'Ticker': ticker, 
                 'Return': net_return, 
-                'Date': sell_date, # 체결일 기준 기록
+                'Date': date,
                 'Reason': reason,
                 'Days': pos['held_bars']
             })
@@ -384,7 +346,6 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                 lockout_until[ticker] = lockout_end
 
         # 매도 후 total_equity 재계산 (매수 시 최신 자산 기준 할당)
-        # 익일 시가 매도분을 현금화했다고 가정하고 다시 계산
         current_positions_value = sum(pos['shares'] * pos['last_price'] for pos in positions.values())
         total_equity = cash + current_positions_value
 
