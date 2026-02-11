@@ -9,6 +9,9 @@ import os
 import sys
 from datetime import datetime, timedelta
 
+import duckdb
+import shutil
+import tempfile
 # ---------------------------------------------------------
 # 1. 한글 폰트 설정
 # ---------------------------------------------------------
@@ -39,53 +42,107 @@ set_korean_font()
 # ---------------------------------------------------------
 # 2. 전략 설정 (최적화 파라미터 적용)
 # ---------------------------------------------------------
-START_DATE = '2010-01-01'
-INITIAL_CAPITAL = 100000000
-MAX_POSITIONS = 5
-MAX_HOLDING_DAYS = 40   # 최대 보유일 (영업일 기준)
+START_DATE = '2016-01-01'
+INITIAL_CAPITAL = 100000000  # 1억
 ALLOCATION_PER_STOCK = 0.20
-TX_FEE_RATE = 0.00015   # 0.015% (매수/매도 각각)
-TAX_RATE = 0.0020       # 0.2% (매도 시)
-SLIPPAGE_RATE = 0.001   # 0.1% (매수/매도 각각 슬리피지 지연/체결오차)
+TX_FEE_RATE = 0.00015  # 0.015%
+TAX_RATE = 0.0020      # 0.20% (매도 시) - 2024년 기준 0.18%? 보수적으로 0.2%
+SLIPPAGE_RATE = 0.001   # 0.1%
 
-# [파라미터 설정] 이곳의 값을 변경하여 테스트 가능
-RSI_WINDOW = 5          # RSI 기간
-BUY_THRESHOLD = 35      # 매수 기준 (RSI < 35)
-SELL_THRESHOLD = 70     # 매도 기준 (RSI > 70)
-SMA_WINDOW = 50        # 이동평균선 기간 (100일선 -> 50)
+# Strategy Parameters (Default - Optimized)
+RSI_WINDOW = 5
+SMA_WINDOW = 60
+BUY_THRESHOLD = 35
+SELL_THRESHOLD = 70
+MAX_HOLDING_DAYS = 30
+MAX_POSITIONS = 5
 
 # ---------------------------------------------------------
 # 3. 데이터 준비
 # ---------------------------------------------------------
-def get_kosdaq150_tickers():
-    """Load KOSDAQ 150 tickers from local file 'kosdaq150_list.txt'."""
-    filename = '../data/kosdaq150_list.txt'
-    tickers = []
+# DuckDB Path (Project: stock-collector)
+DUCKDB_PATH = "/home/longman6/projects/stock-collector/data/stock.duckdb"
+
+def get_db_connection():
+    """
+    Connect to DuckDB safely.
+    If locked, try to verify if it's readable.
+    If strictly locked, copy to temp file and read.
+    """
     try:
-        import ast
-        if not os.path.exists(filename):
-             print(f"[오류] {filename} 파일이 없습니다. 샘플 종목을 사용합니다.")
-             return ['247540', '091990', '066970', '028300', '293490']
-
-        print(f"'{filename}'에서 종목 리스트를 읽어옵니다...")
-        with open(filename, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                if line.endswith(','): line = line[:-1]
-                try:
-                    # Parse dictionary string: {'code': '...', 'name': '...'}
-                    data = ast.literal_eval(line)
-                    tickers.append(data['code']) # FDR uses code only (e.g. '000250')
-                except:
-                    pass
-        
-        print(f"총 {len(tickers)}개 종목 로드 완료.")
-        return tickers
-
+        conn = duckdb.connect(DUCKDB_PATH, read_only=True)
+        # Simple test
+        conn.execute("SELECT 1").fetchone()
+        return conn
     except Exception as e:
-        print(f"[주의] 파일 읽기 오류 ({e}). 샘플 종목 사용.")
-        return ['247540', '091990', '066970', '028300', '293490']
+        print(f"⚠️ Direct DB Connection Failed (Lock?): {e}")
+        print("🔄 Copying DB to temp file for reading...")
+        
+        try:
+            temp_dir = tempfile.gettempdir()
+            temp_db = os.path.join(temp_dir, "stock_temp_backtest.duckdb")
+            shutil.copy2(DUCKDB_PATH, temp_db)
+            conn = duckdb.connect(temp_db, read_only=True)
+            return conn
+        except Exception as e2:
+            print(f"❌ Temp DB Connection Failed: {e2}")
+            return None
+
+def get_kosdaq150_universe_history():
+    """
+    Fetch historical KOSDAQ 150 constituents by year from DuckDB.
+    Returns: DataFrame with columns ['year', 'symbol', 'name']
+    """
+    conn = get_db_connection()
+    if not conn: return pd.DataFrame()
+    
+    try:
+        # Schema: index_code, year, symbol, name
+        query = """
+            SELECT year, symbol, name 
+            FROM index_constituents 
+            WHERE index_code = 'KQ150' 
+            ORDER BY year, symbol
+        """
+        df = conn.execute(query).df()
+        
+        # Ensure symbol is 6 digits string
+        df['symbol'] = df['symbol'].astype(str).str.zfill(6)
+        
+        print(f"✅ Loaded {len(df)} constituent records from DuckDB.")
+        return df
+    except Exception as e:
+        print(f"❌ Failed to fetch universe history: {e}")
+        return pd.DataFrame()
+    finally:
+        conn.close()
+
+def get_full_historical_tickers():
+    """
+    Returns ALL tickers that have ever been in KOSDAQ 150 index.
+    Also returns a dictionary mapping year to list of tickers.
+    """
+    df = get_kosdaq150_universe_history()
+    if df.empty:
+        print("[오류] DB에서 유니버스를 가져오지 못했습니다. 샘플 종목을 사용합니다.")
+        sample = ['247540', '091990', '066970', '028300', '293490']
+        return sample, {2024: sample, 2025: sample}
+        
+    # Unique Tickers across all years
+    all_tickers = df['symbol'].unique().tolist()
+    
+    # Year Map: {2016: ['000250', ...], ...}
+    year_map = df.groupby('year')['symbol'].apply(list).to_dict()
+    
+    print(f"📊 전체 역사적 KOSDAQ 150 종목 수: {len(all_tickers)}개")
+    return all_tickers, year_map
+
+def get_kosdaq150_tickers():
+    # Legacy wrapper for single year (latest)
+    all_t, year_map = get_full_historical_tickers()
+    if not year_map: return all_t
+    latest = max(year_map.keys())
+    return year_map[latest]
 
 def calculate_rsi(data, window):
     delta = data.diff()
@@ -120,105 +177,53 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
         
     fetch_start_date = (start_dt - timedelta(days=200)).strftime("%Y-%m-%d")
     
-    print(f"[{len(tickers)}개 종목] 데이터 준비 (PKL/로컬 최우선)...")
+    print(f"[{len(tickers)}개 종목] DuckDB 데이터 로딩 중...")
     
     stock_data = {}
     valid_tickers = []
     
-    # 0. Check for Consolidated Pickle
-    import glob
-    historical_dir = '../data/historical'
-    pkl_files = glob.glob(os.path.join(historical_dir, "kosdaq150_combined_*.pkl"))
-    
-    loaded_from_pkl = False
-    
-    if pkl_files:
-        # Use the latest one if multiple? Just take first for now.
-        pkl_path = pkl_files[0] 
-        print(f"📂 통합 데이터 로드 중: {pkl_path}")
-        try:
-            combined_data = pd.read_pickle(pkl_path)
-            loaded_from_pkl = True
+    conn = get_db_connection()
+    if not conn:
+        print("❌ DB 연결 실패. 데이터 로드 중단.")
+        return {}, []
+
+    try:
+        # Convert list to SQL compatible string
+        symbols_str = ",".join([f"'{t}'" for t in tickers])
+        
+        # Query OHLCV from DuckDB
+        # Table: ohlcv_daily (symbol, date, open, high, low, close, volume)
+        query = f"""
+            SELECT symbol, date, open, high, low, close, volume
+            FROM ohlcv_daily
+            WHERE symbol IN ({symbols_str})
+              AND date >= '{fetch_start_date}'
+            ORDER BY symbol, date
+        """
+        
+        print("⏳ 쿼리 실행 중 (대량 데이터)...")
+        df_all = conn.execute(query).df()
+        
+        if df_all.empty:
+            print("❌ 데이터가 없습니다.")
+            return {}, []
             
-            # combined_data is dict: {'000250': df, ...}
-            # Need to map to requested tickers
-            for ticker in tickers:
-                code = ticker.split('.')[0]
-                if code in combined_data:
-                    df = combined_data[code]
-                    
-                    # Ensure formatting
-                    if 'Date' in df.columns:
-                        df['Date'] = pd.to_datetime(df['Date'])
-                        df.set_index('Date', inplace=True)
-                        
-                    if not isinstance(df.index, pd.DatetimeIndex):
-                         df.index = pd.to_datetime(df.index)
-                    
-                    df.sort_index(inplace=True)
-                    df = df[df.index >= fetch_start_date]
-                    
-                    if not df.empty and len(df) >= sma_window + 10:
-                        df['SMA'] = df['Close'].rolling(window=sma_window).mean()
-                        df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
-                        df = df[df.index >= start_dt]
-                        
-                        stock_data[ticker] = df # Store with full ticker name
-                        valid_tickers.append(ticker)
-                        
-        except Exception as e:
-            print(f"❌ Pickle Load Error: {e}")
-            loaded_from_pkl = False
-
-    if loaded_from_pkl:
-        print(f"✅ 통합 데이터 로드 완료: {len(valid_tickers)}개 종목 (Source: {pkl_files[0]})")
-        return stock_data, valid_tickers
-
-
-    # 1. Attempt to load from data/historical CSVs if PKL failed or incomplete
-    local_files = glob.glob(os.path.join(historical_dir, "*.csv"))
-    code_to_file = {}
-    for fpath in local_files:
-        basename = os.path.basename(fpath)
-        # Expecting format '000250_Name.csv'
-        parts = basename.split('_')
-        if len(parts) >= 2:
-            code = parts[0]
-            code_to_file[code] = fpath
-
-    # Check which tickers need downloading
-    tickers_to_download = []
-    
-    for ticker in tickers:
-        # Ticker format '000250.KQ' -> code '000250'
-        code = ticker.split('.')[0]
+        print(f"✅ 데이터 로드 완료: {len(df_all)} rows. 처리 중...")
         
-        df = None
-        if code in code_to_file:
-            try:
-                # Load local
-                fpath = code_to_file[code]
-                df = pd.read_csv(fpath)
-                
-                # Standardize columns
-                if 'Date' in df.columns:
-                    df['Date'] = pd.to_datetime(df['Date'])
-                    df.set_index('Date', inplace=True)
-                
-                if not isinstance(df.index, pd.DatetimeIndex):
-                    df.index = pd.to_datetime(df.index)
-                    
-                df.sort_index(inplace=True)
-                
-                # Filter for fetch_start_date
-                df = df[df.index >= fetch_start_date]
-                
-            except Exception as e:
-                print(f"Failed to load local {fpath}: {e}")
-                df = None
+        # Ensure Types
+        df_all['date'] = pd.to_datetime(df_all['date'])
         
-        if df is not None and not df.empty:
-            # Process Indicators
+        # Group by symbol
+        grouped = df_all.groupby('symbol')
+        
+        for symbol, group in grouped:
+            df = group.set_index('date').sort_index()
+            
+            # Rename columns (Lowercase from DB to Capitalized for consistency)
+            df.columns = [c.capitalize() for c in df.columns] 
+            # DuckDB returns: symbol, date, open, high, low, close, volume
+            # We want: Open, High, Low, Close, Volume (Date is index)
+            
             if len(df) >= sma_window + 10:
                 df['SMA'] = df['Close'].rolling(window=sma_window).mean()
                 df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
@@ -226,41 +231,20 @@ def prepare_data(tickers, start_date, rsi_window, sma_window):
                 # Filter start_date
                 df = df[df.index >= start_dt]
                 
-                stock_data[ticker] = df
-                if ticker not in valid_tickers:
-                    valid_tickers.append(ticker)
-        else:
-            tickers_to_download.append(ticker)
-
-    # 2. Download remaining if any (FinanceDataReader)
-    if tickers_to_download:
-        print(f"📥 다운로드 필요 종목: {len(tickers_to_download)}개 (Source: FinanceDataReader)")
-        
-        for ticker in tickers_to_download:
-            try:
-                code = ticker.split('.')[0]
-                # FinanceDataReader Download
-                df = fdr.DataReader(code, fetch_start_date)
-                
-                if df is None or df.empty: continue
-                if len(df) < sma_window + 10: continue
-
-                # FDR returns columns: Open, High, Low, Close, Volume, Change
-                # Index is Date
-                
-                df['SMA'] = df['Close'].rolling(window=sma_window).mean()
-                df['RSI'] = calculate_rsi(df['Close'], window=rsi_window)
-                df = df[df.index >= start_dt]
-                
-                stock_data[ticker] = df
-                if ticker not in valid_tickers:
-                     valid_tickers.append(ticker)
-            except Exception as e:
-                print(f"Failed to download {ticker}: {e}")
-                pass
+                if not df.empty:
+                    # Ticker naming: KIS uses '005930', prev code used '005930.KQ'? 
+                    # Let's clean ticker input to be just code.
+                    stock_data[symbol] = df
+                    valid_tickers.append(symbol)
+                    
+    except Exception as e:
+        print(f"❌ Data Preparation Error: {e}")
+    finally:
+        conn.close()
 
     print(f"✅ 총 {len(valid_tickers)}개 종목 데이터 준비 완료.")
     return stock_data, valid_tickers
+
 
 # ---------------------------------------------------------
 # 4. 시뮬레이션 엔진
@@ -270,25 +254,62 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
                    buy_threshold=BUY_THRESHOLD, 
                    sell_threshold=SELL_THRESHOLD, 
                    max_positions=MAX_POSITIONS,
-                   loss_lockout_days=0):
+                   loss_lockout_days=0,
+                   universe_map=None): # New Parameter
     
+    # ---------------------------
     # Dynamic Allocation
+    # ---------------------------
+    if max_positions <= 0: max_positions = 5
     allocation_per_stock = 1.0 / max_positions
 
-    all_dates = sorted(list(set().union(*[df.index for df in stock_data.values()])))
-    # If using filter, ensure we have market data for these dates
-    if use_filter and market_data is not None:
-         market_data = market_data.reindex(all_dates).ffill()
+    # Merge all dates
+    all_dates = set()
+    for ticker in valid_tickers:
+        if ticker in stock_data:
+            all_dates.update(stock_data[ticker].index)
+    
+    all_dates = sorted(list(all_dates))
+    if not all_dates:
+        print("❌ No data available for simulation.")
+        return 0, 0, 0, 0, [], pd.DataFrame()
 
     cash = INITIAL_CAPITAL
-    positions = {}
+    positions = {} # {'ticker': {'shares': 0, 'buy_price': 0, 'buy_date': date, 'held_bars': 0}}
+    
     history = []
     trades = []
     
-    # Loss Lockout Dictionary: {ticker: lockout_end_date}
+    # Loss Lockout Tracking
+    # {'ticker': lockout_end_date}
     lockout_until = {}
-
+    
+    # ---------------------------
+    # Simulation Loop (Daily)
+    # ---------------------------
     for date in all_dates:
+        # Determine Universe for this year
+        current_year = date.year
+        # If universe_map provided, filter valid_tickers dynamically
+        daily_universe = valid_tickers # Default to all valid_tickers if no map
+        if universe_map:
+            # Use universe of the year (or previous year if current not available yet)
+            # Default to latest if future
+            target_year = current_year
+            if target_year not in universe_map:
+                # Fallback to closest year or empty
+                available_years = sorted(universe_map.keys())
+                if available_years:
+                     # Find closest year <= current_year
+                     valid_years = [y for y in available_years if y <= current_year]
+                     if valid_years:
+                         target_year = valid_years[-1]
+                     else:
+                         target_year = available_years[0] # If all years are > current_year, use earliest
+            
+            if target_year in universe_map:
+                daily_universe = universe_map[target_year]
+                
         # 0. Clean up expired lockouts
         # This is strictly not necessary if we check date > lockout_until, but good for memory if long simulation
 
@@ -364,50 +385,66 @@ def run_simulation(stock_data, valid_tickers, market_data=None, use_filter=False
 
         open_slots = max_positions - len(positions)
         if open_slots > 0 and market_condition_ok:
+            # 2. 매수 (조건 충족 시)
+            # Dynamic Universe Filtering
             buy_candidates = []
-            for ticker in valid_tickers:
-                if ticker in positions: continue
+            
+            # Only iterate over today's valid universe that we have data for
+            # Intersection of [Today's Universe] AND [Loaded Data Tickers]
+            universe_candidates = [t for t in daily_universe if t in stock_data]
+            
+            for ticker in universe_candidates:
+                if ticker in positions: continue # 이미 보유 중
                 
-                # Check Lockout
+                # Lockout Check
                 if ticker in lockout_until:
                     if date <= lockout_until[ticker]:
                         continue
                     else:
-                        del lockout_until[ticker] # Lockout expired
-
+                        del lockout_until[ticker] # Expired
+                
                 df = stock_data[ticker]
                 if date not in df.index: continue
-
+                
                 row = df.loc[date]
-                # 매수 조건: SMA선 위 & RSI <= BUY_THRESHOLD
+                
+                # Buy Logic
+                # RSI < Threshold AND Close > SMA
+                if pd.isna(row['RSI']) or pd.isna(row['SMA']): continue
+                
                 if row['Close'] > row['SMA'] and row['RSI'] <= buy_threshold:
-                    buy_candidates.append({'ticker': ticker, 'rsi': row['RSI'], 'price': row['Close']})
+                     buy_candidates.append({
+                         'ticker': ticker,
+                         'rsi': row['RSI'],
+                         'price': row['Close']
+                     })
+            
+            # Sort by RSI ascending (더 과매도된 종목 우선)
+            buy_candidates.sort(key=lambda x: x['rsi']) 
 
-            if buy_candidates:
-                buy_candidates.sort(key=lambda x: x['rsi'])  # RSI만 정렬 (원래대로)
-                for candidate in buy_candidates[:open_slots]:
-                    # 매 매수 전에 현재 포지션 가치 + 현금으로 total_equity 재계산
-                    current_positions_value = sum(
-                        pos['shares'] * pos['last_price'] for pos in positions.values()
-                    )
-                    total_equity = cash + current_positions_value
-                    
-                    # Dynamic Allocation Amount
-                    target_amt = total_equity * allocation_per_stock
-                    invest_amt = min(target_amt, cash)
-                    max_buy_amt = invest_amt / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
+            for candidate in buy_candidates[:open_slots]:
+                # 매 매수 전에 현재 포지션 가치 + 현금으로 total_equity 재계산
+                current_positions_value = sum(
+                    pos['shares'] * pos['last_price'] for pos in positions.values()
+                )
+                total_equity = cash + current_positions_value
+                
+                # Dynamic Allocation Amount
+                target_amt = total_equity * allocation_per_stock
+                invest_amt = min(target_amt, cash)
+                max_buy_amt = invest_amt / (1 + TX_FEE_RATE + SLIPPAGE_RATE)
 
-                    if max_buy_amt < 10000: continue
-                    shares = int(max_buy_amt / candidate['price'])
-                    if shares > 0:
-                        buy_val = shares * candidate['price']
-                        cash -= (buy_val + buy_val * (TX_FEE_RATE + SLIPPAGE_RATE))
-                        positions[candidate['ticker']] = {
-                            'shares': shares, 'buy_price': candidate['price'],
-                            'last_price': candidate['price'],
-                            'buy_date': date,
-                            'held_bars': 0 # Initialize holding period counter (trading days)
-                        }
+                if max_buy_amt < 10000: continue
+                shares = int(max_buy_amt / candidate['price'])
+                if shares > 0:
+                    buy_val = shares * candidate['price']
+                    cash -= (buy_val + buy_val * (TX_FEE_RATE + SLIPPAGE_RATE))
+                    positions[candidate['ticker']] = {
+                        'shares': shares, 'buy_price': candidate['price'],
+                        'last_price': candidate['price'],
+                        'buy_date': date,
+                        'held_bars': 0 # Initialize holding period counter (trading days)
+                    }
 
         # 4. 마지막에 held_bars 증가 (매도/매수 완료 후)
         for ticker, pos in positions.items():
@@ -645,32 +682,41 @@ def run_comparative_backtest():
     with open(config_file, 'r', encoding='utf-8') as f:
         configs = json.load(f)
 
-    tickers = get_kosdaq150_tickers()
+    # Use Full Historical Tickers, but pass year_map to simulation
+    all_tickers, year_map = get_full_historical_tickers()
+    if not year_map:
+        print("❌ Failed to load ticker map.")
+        return
+
     results = []
 
     print(f"\n🚀 Running Comparative Backtest for options: {list(configs.keys())}")
+    print(f"📊 Total Universe Size (All Time): {len(all_tickers)}")
     
     for name, cfg in configs.items():
         print(f"\n>>> [Option {name}] Parameters: {cfg}")
         
-        # Prepare Data
-        stock_data, valid_tickers = prepare_data(
-            tickers, 
+        # Prepare Data (Load ALL tickers once)
+        # Note: Optimization - we could load data once outside loop, but config might change windows.
+        # However, data loading is heavy. If window changes, indicators change.
+        stock_data, _ = prepare_data(
+            all_tickers, 
             START_DATE, 
             cfg['rsi_window'], 
             cfg['sma_window']
         )
         
-        # Run Simulation
+        # Run Simulation with Universe Map
         ret, mdd, win_rate, count, hist, trades = run_simulation(
             stock_data, 
-            valid_tickers, 
+            all_tickers, # Pass all valid data keys
             use_filter=False,
             max_holding_days=cfg['max_holding_days'],
             buy_threshold=cfg['buy_threshold'],
             sell_threshold=cfg['sell_threshold'],
             max_positions=cfg['max_positions'],
-            loss_lockout_days=cfg.get('loss_lockout_days', 0)
+            loss_lockout_days=cfg.get('loss_lockout_days', 0),
+            universe_map=year_map # Pass the dynamic universe
         )
         
         results.append({

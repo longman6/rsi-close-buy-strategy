@@ -16,5 +16,14 @@
         "max_holding_days": 30,
         "max_positions": 5,
         "loss_lockout_days": 30
+    },
+    "Strategy_C_Optimal": {
+        "rsi_window": 5,
+        "sma_window": 60,
+        "buy_threshold": 35,
+        "sell_threshold": 70,
+        "max_holding_days": 30,
+        "max_positions": 5,
+        "loss_lockout_days": 30
     }
 }
