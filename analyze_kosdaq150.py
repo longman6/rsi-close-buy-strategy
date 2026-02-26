@@ -212,6 +212,9 @@ def analyze_kosdaq150():
                      elif not is_above_sma:
                          logging.info(f"📉 Skipping AI Query for {name}: Below SMA")
                          
+                     elif not config.USE_LLM_ANALYSIS:
+                         logging.info(f"⏭️ Skipping AI Query for {name}: config.USE_LLM_ANALYSIS is False")
+                         
                      else:
                          # Prepare OHLCV Text (Last 30 days)
                          recent_df = df.tail(30)

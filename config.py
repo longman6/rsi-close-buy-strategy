@@ -22,6 +22,9 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", "")
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "#general")
 
+# LLM Config
+USE_LLM_ANALYSIS = os.getenv("USE_LLM_ANALYSIS", "true").lower() == "true"
+
 # Strategy Constants
 RSI_WINDOW = int(os.getenv("RSI_WINDOW", 3))
 SMA_WINDOW = int(os.getenv("SMA_WINDOW", 100))
